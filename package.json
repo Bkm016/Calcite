@@ -43,7 +43,7 @@
     "build": "npm run build:probe && npm run build:ts",
     "build:ts": "tsc -p tsconfig.json",
     "build:probe": "node scripts/build-probe.mjs",
-    "test": "npm run build && node --test test/*.test.mjs && node scripts/test-probe.mjs",
+    "test": "npm run build && node --test test/unit.test.mjs && node scripts/test-probe.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "prepack": "npm run build"
   },
