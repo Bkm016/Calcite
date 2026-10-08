@@ -28,7 +28,7 @@ interface Pending {
  * TCP endpoint (127.0.0.1, random port) the in-game probe connects to. Authenticated with a random token;
  * JSON objects separated by newlines.
  *
- * Events: 'connected', 'disconnected'.
+ * Events: 'connected', 'disconnected', 'event' (an extension event: {name, data, time}).
  */
 export class ProbeServer extends EventEmitter {
   readonly token = randomBytes(24).toString('hex');
@@ -84,6 +84,10 @@ export class ProbeServer extends EventEmitter {
         this.socket = socket;
         log.debug(`probe connected (java ${String(msg.java)})`);
         this.emit('connected', msg);
+        return;
+      }
+      if (msg.type === 'event') {
+        this.emit('event', { name: String(msg.name), data: msg.data, time: Number(msg.time) || Date.now() });
         return;
       }
       this.onResponse(msg);

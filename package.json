@@ -1,6 +1,6 @@
 {
   "name": "@bkm016/calcite",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Drive a real Minecraft Java client from code or AI agents: launch, join servers, read client-side entities, chat, run commands and take screenshots. Ships a CLI and an MCP server.",
   "type": "module",
   "license": "MIT",

@@ -61,6 +61,16 @@ public final class Json {
                 write(sb, o);
             }
             sb.append(']');
+        } else if (v.getClass().isArray()) {
+            sb.append('[');
+            int n = java.lang.reflect.Array.getLength(v);
+            for (int i = 0; i < n; i++) {
+                if (i > 0) {
+                    sb.append(',');
+                }
+                write(sb, java.lang.reflect.Array.get(v, i));
+            }
+            sb.append(']');
         } else {
             string(sb, v.toString());
         }

@@ -29,6 +29,7 @@ Calcite 用于以编程方式驱动**真实的 Minecraft Java 版客户端**。�
 - [平台与账号](#平台与账号)
 - [渲染模式](#渲染模式)
 - [模组](#模组)
+- [扩展](#扩展)
 - [版本兼容性](#版本兼容性)
 - [数据目录与环境变量](#数据目录与环境变量)
 - [故障排查](#故障排查)
@@ -45,6 +46,7 @@ Calcite 用于以编程方式驱动**真实的 Minecraft Java 版客户端**。�
 - **玩家操作**：转向、移动、寻路到坐标、攻击、使用物品与方块、挖掘、切换快捷栏、丢弃物品，以及打开箱子等容器并点击槽位。操作走原版客户端逻辑，与真实玩家输入等价。
 - **按需渲染**：默认不渲染画面，截图时临时渲染。单次截图约 0.5 秒，进服后首次截图需等待区块编译，约 2–4 秒。
 - **Java 自动管理**：按游戏版本自动选择 Java（render `off` 时原本需要 Java 8 的版本改用 Java 17，HeadlessMC 3 的 LWJGL 替身不支持 Java 8）；本机缺少时从 Eclipse Adoptium 下载 Temurin，并校验 SHA-256。HeadlessMC 3 本身运行在 Java 25 上，同样按需下载。
+- **可扩展**：第三方可用 Java 编写扩展 jar，为 bot 增加自定义命令与事件；游戏内的模组也可以零依赖地注册命令。Node.js、MCP、命令行均可直接调用，见[扩展](#扩展)。
 - **自动重连**：掉线或崩溃后按指数退避自动重连。
 - **多客户端**：一个进程可同时管理多个相互隔离的客户端实例。
 
@@ -106,6 +108,8 @@ calcite launch play.example.com -V 1.21.11 -n Bot1
 | `:container` / `:close` | 查看 / 关闭当前打开的容器 |
 | `:click <槽位> [按键] [模式]` | 点击容器槽位，模式见下文 |
 | `:drop [all]` | 丢弃手中物品（`all` 丢弃整组） |
+| `:ext` | 列出扩展命令 |
+| `:call <命令> [JSON 参数]` | 调用扩展命令，例如 `:call hud.tablist {"limit":5}` |
 | `:quit` | 退出并关闭客户端 |
 
 ### 命令一览
@@ -132,6 +136,7 @@ calcite launch play.example.com -V 1.21.11 -n Bot1
 | `-r, --render <mode>` | `on-demand` | 渲染模式：`on-demand`、`always`、`off` |
 | `-l, --loader <loader>` | — | 模组加载器：`fabric`、`forge`、`neoforge`，可加 `@<版本>`，见[模组](#模组) |
 | `--mod <spec>` | — | 加载模组，可重复；需同时指定加载器 |
+| `--ext <jar>` | — | 加载探针扩展（本地 jar 或 URL），可重复；扩展事件输出到标准错误 |
 | `--java <path>` | 自动选择 | 指定游戏使用的 Java |
 | `--no-java-download` | — | 禁止自动下载 Java |
 | `--memory <size>` | `2G` | 最大堆内存 |
@@ -165,7 +170,7 @@ Claude Code 也可以通过命令添加：
 claude mcp add calcite -- npx -y @bkm016/calcite mcp
 ```
 
-`calcite mcp` 支持 `-r, --render <mode>` 和 `--memory <size>`，用于设置新客户端的默认值。
+`calcite mcp` 支持 `-r, --render <mode>`、`--memory <size>` 和 `--ext <jar>`（可重复），用于设置新客户端的默认值。
 
 ### 工具列表
 
@@ -179,7 +184,7 @@ claude mcp add calcite -- npx -y @bkm016/calcite mcp
 | `send_chat` | 发送聊天消息 |
 | `run_command` | 执行指令，并返回执行期间收到的聊天 |
 | `screenshot` | 渲染并返回 PNG 截图 |
-| `wait_for` | 等待条件成立：聊天匹配正则、实体出现或消失、进入指定阶段 |
+| `wait_for` | 等待条件成立：聊天匹配正则、实体出现或消失、进入指定阶段、收到扩展事件 |
 | `get_chat` | 获取聊天记录 |
 | `get_logs` | 获取游戏日志与 Calcite 日志，用于排查崩溃 |
 | `set_render` | 开启或关闭持续渲染 |
@@ -199,6 +204,9 @@ claude mcp add calcite -- npx -y @bkm016/calcite mcp
 | `click_slot` | 点击容器槽位，支持拾取、快速移动、数字键交换、丢弃等模式 |
 | `close_container` | 关闭当前容器 |
 | `drop_item` | 丢弃手中物品 |
+| `list_extensions` | 列出扩展与模组注册的命令（名称、说明、参数 schema）及已加载的扩展 jar |
+| `call_extension` | 调用扩展命令 |
+| `get_events` | 获取扩展事件（可按序号、名称正则过滤） |
 | `install_version` | 预下载指定版本，可同时安装模组加载器 |
 | `list_versions` | 列出可用版本 |
 | `account_login_start` | 开始微软账号登录，返回验证链接 |
@@ -244,6 +252,7 @@ await bot.stop();
 | `render` | `on-demand`（默认）、`always`、`off` |
 | `loader` | 模组加载器：`fabric`、`forge`、`neoforge`，可加 `@<版本>` |
 | `mods` | 模组列表：本地 jar 或目录、http(s) URL、`modrinth:<项目>[@<版本>]` |
+| `extensions` | 探针扩展 jar：本地路径或 http(s) URL |
 | `memory` | 最大堆内存，默认 `2G` |
 | `javaPath` / `allowJavaDownload` | 指定 Java 路径 / 是否允许自动下载 |
 | `jvmArgs` / `gameArgs` | 额外的 JVM 参数 / 游戏参数 |
@@ -262,7 +271,7 @@ await bot.stop();
 | `entities(query)` | 实体列表，`query` 支持 `radius`、`type`、`name`、`uuid`、`limit` |
 | `chat(text)` / `command(cmd)` | 发送聊天 / 执行指令 |
 | `screenshot({ keep })` | 返回 `{ png, path? }` |
-| `waitFor(cond, timeoutMs)` | 等待聊天、实体或阶段条件 |
+| `waitFor(cond, timeoutMs)` | 等待聊天、实体、阶段条件或扩展事件（`{ event: '正则' }`） |
 | `setRender(enabled)` / `respawn()` | 切换持续渲染 / 重生 |
 | `chatSince(seq)` / `logsSince(opts)` | 读取聊天与日志缓冲 |
 | `look({ yaw, pitch } \| { x, y, z })` | 设置视角或看向坐标 |
@@ -276,8 +285,10 @@ await bot.stop();
 | `container({ waitMs })` / `closeContainer()` | 查询 / 关闭当前容器 |
 | `click(slot, { button, mode })` | 点击容器槽位 |
 | `drop({ all })` | 丢弃手中物品 |
+| `extensions()` / `call(name, args)` | 列出扩展命令 / 调用扩展命令 |
+| `eventsSince({ since, name, limit })` | 读取扩展事件缓冲（最多保留 1000 条） |
 
-事件：`phase`、`state`、`chat`、`log`、`exit`。
+事件：`phase`、`state`、`chat`、`log`、`exit`、`extension`（扩展事件 `{ seq, time, name, data }`）。
 
 ### 玩家操作示例
 
@@ -356,6 +367,92 @@ Forge 与 NeoForge 的安装器要求与游戏版本完全一致的 Java 主版�
 
 已验证：Fabric 1.21.11 / 26.3（含 Fabric API）、NeoForge 1.20.4 / 1.21.11、Forge 1.20.1 / 1.21.1。
 
+## 扩展
+
+内置操作之外的能力可以由第三方补充，有两种方式：
+
+- **扩展 jar**：用 Java 编写，通过探针 API 注册命令、发送事件，启动时用 `extensions` / `--ext` 加载。适合为 bot 增加读取界面、执行复杂操作等能力，不需要模组加载器。
+- **模组桥接**：游戏中已安装的模组无需依赖 Calcite，直接通过系统属性注册命令。适合模组作者为自己的模组提供测试接口。
+
+两种方式注册的命令都可以从 Node.js、MCP 与命令行调用；事件推送到 Node.js 端，可以监听、查询，也可以在 `wait_for` 中等待。
+
+### 使用扩展
+
+```js
+const bot = new Client({ version: '1.21.11', server: 'localhost', extensions: ['./calcite-hud.jar'] });
+bot.on('extension', (e) => console.log(e.name, e.data));     // 例如 hud.title { title: 'Hello', subtitle: null }
+await bot.start();
+
+console.log(await bot.extensions());                         // { commands: [...], extensions: [{ jar, ids }] }
+console.log(await bot.call('hud.sidebar'));                  // { title: 'Kills', lines: [{ name: 'Bot1', score: 7 }] }
+await bot.waitFor({ event: '^hud\\.title$' }, 10_000);
+```
+
+```bash
+calcite launch localhost -V 1.21.11 --ext ./calcite-hud.jar   # 交互模式中用 :ext 与 :call
+calcite mcp --ext ./calcite-hud.jar                            # MCP 中用 list_extensions / call_extension / get_events
+```
+
+[`examples/extension-hud`](examples/extension-hud) 是一个完整示例，提供 `hud.bossbars`（Boss 栏）、`hud.sidebar`（计分板侧边栏）、`hud.tablist`（Tab 列表）、`hud.title`（标题与动作栏）四个命令，并在标题或动作栏变化时发送 `hud.title`、`hud.actionbar` 事件。已在原版 1.21.11、Fabric 1.21.11、Forge 1.20.1 上验证。构建方法：`npm run build:probe && node examples/extension-hud/build.mjs`。
+
+### 编写扩展 jar
+
+扩展针对探针 API 编译。API 位于 npm 包内的 `vendor/calcite-probe.jar`（包名 `calcite.probe.api`），只在编译时需要，不要打包进扩展。以 Java 8 为目标编译即可在所有版本上运行。
+
+```java
+package com.example;
+
+import calcite.probe.api.*;
+
+public final class MyExtension implements CalciteExtension {
+    @Override public String id() { return "my"; }                  // 命令与事件名的前缀
+
+    @Override public void init(final Calcite c) {
+        c.command("health", "玩家生命值", null, args -> c.onGameThread(() -> {
+            Object player = c.ref().get(c.minecraft(), "player");      // Mojang 官方名称，任何加载器下都可用
+            return player == null ? null : c.ref().call(player, "getHealth");
+        }, 5000));                                                     // 注册为 my.health
+        c.emit("ready", c.minecraftVersion());                         // 发送事件 my.ready
+    }
+}
+```
+
+在 jar 中添加 `META-INF/services/calcite.probe.api.CalciteExtension`，内容为实现类的全名（一个 jar 可以包含多个扩展）。
+
+`Calcite` 接口：
+
+| 方法 | 说明 |
+| --- | --- |
+| `command(name, [description, schema,] handler)` | 注册命令 `<id>.<name>`。`handler` 接收参数 `Map`，返回值序列化为 JSON（支持 `Map`、`List`、数组、字符串、数字、布尔、`null`）；`schema` 为参数的 JSON Schema，会显示在 `list_extensions` 中 |
+| `emit(name, data)` | 发送事件 `<id>.<name>` |
+| `onGameThread(task, timeoutMs)` | 在游戏主线程上执行；读写游戏状态必须在主线程进行。命令处理器本身运行在工作线程 |
+| `ref()` | 反射工具，按 Mojang 官方名称访问类、字段与方法（`cls`、`get`、`call`、`method` 等），自动转换为运行时的 intermediary / SRG 名称 |
+| `minecraft()` / `minecraftVersion()` / `headless()` | `Minecraft` 实例 / 版本号 / 是否以无渲染方式运行 |
+| `call(op, args)` | 调用探针内置操作，例如 `state`、`entities`、`chat` |
+| `log(message)` | 写入游戏日志 |
+
+处理器抛出 `CalciteException(code, message)` 时，调用方收到对应的错误码；其他异常的错误码为 `error`。扩展的类加载器可以看到游戏（含模组）的全部类，但为了兼容所有加载器与版本，推荐通过 `ref()` 以官方名称反射访问。
+
+### 模组桥接
+
+模组无需依赖 Calcite。探针在游戏启动前通过系统属性发布两个对象：
+
+| 系统属性 | 类型 | 用途 |
+| --- | --- | --- |
+| `calcite.commands` | `Map<String, Object>` | 放入命令。值可以是 `Function<Map<String, Object>, Object>`、`Callable`、`Runnable`，或 `Map`：`{ handler, description, schema }` |
+| `calcite.emit` | `BiConsumer<String, Object>` | 发送事件 |
+
+```java
+@SuppressWarnings("unchecked")
+static void registerCalcite() {
+    Object commands = System.getProperties().get("calcite.commands");
+    if (!(commands instanceof Map)) return;                            // 不是由 Calcite 启动
+    ((Map<String, Object>) commands).put("mymod.status", (Function<Map<String, Object>, Object>) args -> MyMod.status());
+}
+```
+
+模组命令在 `list_extensions` 中的 `source` 为 `mod`，命令名不会自动加前缀，建议使用 `<模组 ID>.<命令>`。
+
 ## 版本兼容性
 
 | 版本范围 | 支持情况 |
@@ -406,6 +503,8 @@ Forge 与 NeoForge 的安装器要求与游戏版本完全一致的 Java 主版�
 | `install_failed` | HeadlessMC 未能安装加载器（该游戏版本可能没有对应构建） |
 | `bad_mod` / `mod_not_found` | 模组参数错误 / 找不到模组文件或 Modrinth 上没有适配的版本 |
 | `mod_loading_failed` | 模组加载失败（缺少前置、版本不兼容等），错误信息附带日志 |
+| `extension_not_found` | 找不到扩展 jar |
+| `unknown_command` | 没有该扩展命令，可用 `list_extensions` 查看；扩展 jar 加载失败的原因见 `extensions()` 返回的 `error` |
 
 排查环境问题时，建议先运行 `calcite doctor`。
 

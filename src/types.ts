@@ -27,6 +27,11 @@ export interface ClientOptions {
    * Mods Calcite placed earlier and no longer listed are removed; other files in the folder are kept.
    */
   mods?: string[];
+  /**
+   * Probe extensions: jars implementing {@code calcite.probe.api.CalciteExtension} (local files or http(s) URLs).
+   * They add commands ({@link ExtensionCommand}) and events to the bot; see the README.
+   */
+  extensions?: string[];
   /** Server to join ("host[:port]"). Without a server the client stays on the title screen. */
   server?: string | ServerAddress;
   /** Account: offline (any username, for online-mode=false servers) or a stored Microsoft account. */
@@ -61,6 +66,32 @@ export interface LogLine {
   time: number;
   source: 'game' | 'calcite';
   line: string;
+}
+
+/** A command added by a probe extension or a mod (through the mod bridge). */
+export interface ExtensionCommand {
+  /** Full name, e.g. "hud.bossbars". */
+  name: string;
+  description?: string;
+  /** JSON schema of the arguments, when the extension declares one. */
+  schema?: Record<string, unknown>;
+  /** Extension id, or "mod" for commands registered by a mod through the bridge. */
+  source: string;
+}
+
+export interface ExtensionInfo {
+  jar: string;
+  ids: string[];
+  /** Why the jar could not be loaded. */
+  error?: string;
+}
+
+/** An event sent by an extension or a mod. */
+export interface ExtensionEvent {
+  seq: number;
+  time: number;
+  name: string;
+  data: unknown;
 }
 
 export interface ChatLine {
@@ -222,6 +253,8 @@ export interface ClientStatus {
   loader?: string;
   /** File names of the mods Calcite placed in the mods folder. */
   mods?: string[];
+  /** Extension jars passed to the probe. */
+  extensions?: string[];
   phase: Phase;
   render: RenderMode;
   headless: boolean;

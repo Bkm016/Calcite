@@ -12,6 +12,9 @@ import {
   type DigResult,
   type EntityInfo,
   type EntityQuery,
+  type ExtensionCommand,
+  type ExtensionEvent,
+  type ExtensionInfo,
   type GameState,
   type HitTarget,
   type InventoryInfo,
@@ -28,7 +31,8 @@ export { installVersion, type InstallOptions } from './install.js';
 /**
  * One Minecraft client controlled by Calcite.
  *
- * Events: 'phase' (Phase), 'log' (LogLine), 'chat' (ChatLine), 'state' (GameState), 'exit' (code).
+ * Events: 'phase' (Phase), 'log' (LogLine), 'chat' (ChatLine), 'state' (GameState), 'extension' (ExtensionEvent),
+ * 'exit' (code).
  */
 export class Client extends ClientCore {
   async state(): Promise<GameState> {
@@ -199,21 +203,43 @@ export class Client extends ClientCore {
     return limit ? lines.slice(-limit) : lines;
   }
 
+  /** Extension events received after {@code since}, optionally only those whose name matches {@code name} (regex). */
+  eventsSince(opts: { since?: number; name?: string; limit?: number } = {}): ExtensionEvent[] {
+    const re = opts.name ? new RegExp(opts.name) : undefined;
+    const list = this.events.filter((e) => e.seq > (opts.since ?? 0) && (!re || re.test(e.name)));
+    return opts.limit ? list.slice(-opts.limit) : list;
+  }
+
+  /** Commands registered by extensions and mods, and the extension jars the probe loaded. */
+  async extensions(): Promise<{ commands: ExtensionCommand[]; extensions: ExtensionInfo[] }> {
+    return this.requireProbe().request('ext.list');
+  }
+
+  /** Calls an extension command, e.g. {@code call('hud.bossbars')}. */
+  async call<T = unknown>(name: string, args: Record<string, unknown> = {}, opts: { timeoutMs?: number } = {}): Promise<T> {
+    return this.requireProbe().request<T>('ext.call', { name, args }, opts.timeoutMs ?? 30_000);
+  }
+
   /**
-   * Waits for a condition: a chat line matching {@code chat} (regex), an entity appearing/disappearing, or a
-   * phase. Resolves with a description of what matched.
+   * Waits for a condition: a chat line matching {@code chat} (regex), an extension event whose name matches
+   * {@code event} (regex), an entity appearing/disappearing, or a phase. Resolves with a description of what matched.
    */
   async waitFor(
-    cond: { chat?: string; entity?: EntityQuery & { present?: boolean }; phase?: Phase },
+    cond: { chat?: string; event?: string; entity?: EntityQuery & { present?: boolean }; phase?: Phase },
     timeoutMs = 30_000,
-  ): Promise<{ matched: string; chat?: ChatLine; entities?: EntityInfo[] }> {
+  ): Promise<{ matched: string; chat?: ChatLine; event?: ExtensionEvent; entities?: EntityInfo[] }> {
     const deadline = Date.now() + timeoutMs;
     const chatRe = cond.chat ? new RegExp(cond.chat, 'i') : undefined;
+    const eventRe = cond.event ? new RegExp(cond.event) : undefined;
     const startSeq = this.seq;
     for (;;) {
       if (chatRe) {
         const hit = this.chats.find((c) => c.seq > startSeq && chatRe.test(c.message));
         if (hit) return { matched: 'chat', chat: hit };
+      }
+      if (eventRe) {
+        const hit = this.events.find((e) => e.seq > startSeq && eventRe.test(e.name));
+        if (hit) return { matched: 'event', event: hit };
       }
       if (cond.phase && this.phase === cond.phase) return { matched: 'phase' };
       if (cond.entity && this.probe?.connected) {

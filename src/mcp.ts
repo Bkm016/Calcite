@@ -64,6 +64,7 @@ export function createMcpServer(opts: McpOptions = {}): { server: McpServer; man
         'Offline accounts need no login. For premium servers call account_login_start, show the URL to the user, then poll account_login_status.',
         'Screenshots need render "on-demand" (default) or "always"; with "on-demand" frames are only rendered while a screenshot is taken, keeping CPU usage low.',
         'Mods: launch_client with loader "fabric", "forge" or "neoforge" (installed on first use) and mods such as "modrinth:fabric-api", URLs or local jars.',
+        'Extensions add abilities: launch_client with extensions (probe extension jars), then list_extensions shows their commands (with argument schemas), call_extension runs one, get_events / wait_for {event} read what they report. Mods can register commands too.',
       ].join('\n'),
     },
   );
@@ -85,6 +86,10 @@ export function createMcpServer(opts: McpOptions = {}): { server: McpServer; man
           .array(z.string())
           .optional()
           .describe('Mods (needs loader): "modrinth:<project>[@version]" (with required dependencies), http(s) URLs of jars, or local jar/folder paths'),
+        extensions: z
+          .array(z.string())
+          .optional()
+          .describe('Probe extension jars (local paths or http(s) URLs) that add commands and events; see list_extensions'),
         server: z.string().optional().describe('host[:port] to join'),
         username: z.string().optional().describe('Offline username (3-16 chars). Ignored when microsoft is set'),
         microsoft: z.union([z.boolean(), z.string()]).optional().describe('Use a stored Microsoft account: true for the primary one or the profile name'),
@@ -104,6 +109,7 @@ export function createMcpServer(opts: McpOptions = {}): { server: McpServer; man
         version: a.version,
         loader: a.loader,
         mods: a.mods,
+        extensions: a.extensions ?? opts.defaults?.extensions,
         server: a.server,
         account,
         render: a.render ?? opts.defaults?.render,
@@ -209,17 +215,18 @@ export function createMcpServer(opts: McpOptions = {}): { server: McpServer; man
     'wait_for',
     {
       title: 'Wait for a condition',
-      description: 'Blocks until a chat line matches, an entity appears/disappears, or the client reaches a phase.',
+      description: 'Blocks until a chat line matches, an extension event arrives, an entity appears/disappears, or the client reaches a phase.',
       inputSchema: {
         client: clientName,
         chat: z.string().optional().describe('Case-insensitive regular expression matched against new chat lines'),
+        event: z.string().optional().describe('Regular expression matched against the names of new extension events'),
         entity: z.object({ ...entityFilter, present: z.boolean().optional().describe('false waits for it to disappear') }).optional(),
         phase: z.enum(['in_game', 'disconnected', 'reconnecting', 'crashed', 'stopped']).optional(),
         timeoutSeconds: z.number().positive().max(600).default(30),
       },
     },
     safe(async ({ client, timeoutSeconds, ...cond }) => {
-      if (!cond.chat && !cond.entity && !cond.phase) throw new CalciteError('bad_condition', 'Give chat, entity or phase');
+      if (!cond.chat && !cond.event && !cond.entity && !cond.phase) throw new CalciteError('bad_condition', 'Give chat, event, entity or phase');
       return text(await manager.resolve(client).waitFor(cond, timeoutSeconds * 1000));
     }),
   );
@@ -232,6 +239,49 @@ export function createMcpServer(opts: McpOptions = {}): { server: McpServer; man
       inputSchema: { client: clientName, since: z.number().int().nonnegative().optional(), limit: z.number().int().positive().max(1000).default(50) },
     },
     safe(async ({ client, since, limit }) => text(manager.resolve(client).chatSince(since ?? 0, limit))),
+  );
+
+  server.registerTool(
+    'list_extensions',
+    {
+      title: 'Extension commands',
+      description:
+        'Commands added by probe extensions and mods (name, description, JSON schema of the arguments) and the extension jars that were loaded (with load errors).',
+      inputSchema: { client: clientName },
+    },
+    safe(async ({ client }) => text(await manager.resolve(client).extensions())),
+  );
+
+  server.registerTool(
+    'call_extension',
+    {
+      title: 'Call an extension command',
+      description: 'Runs a command from list_extensions with JSON arguments matching its schema and returns its result.',
+      inputSchema: {
+        client: clientName,
+        name: z.string().min(1).describe('Command name from list_extensions, e.g. "hud.bossbars"'),
+        args: z.record(z.string(), z.unknown()).optional().describe('Arguments object'),
+        timeoutSeconds: z.number().positive().max(600).default(30),
+      },
+    },
+    safe(async ({ client, name, args, timeoutSeconds }) =>
+      text(await manager.resolve(client).call(name, args ?? {}, { timeoutMs: timeoutSeconds * 1000 })),
+    ),
+  );
+
+  server.registerTool(
+    'get_events',
+    {
+      title: 'Extension events',
+      description: 'Events sent by extensions and mods. Pass the last seen seq as "since" to get only new ones.',
+      inputSchema: {
+        client: clientName,
+        since: z.number().int().nonnegative().optional(),
+        name: z.string().optional().describe('Regular expression the event name must match'),
+        limit: z.number().int().positive().max(1000).default(50),
+      },
+    },
+    safe(async ({ client, ...q }) => text(manager.resolve(client).eventsSince(q))),
   );
 
   server.registerTool(

@@ -9,7 +9,7 @@ import { supportsQuickPlay, requiredJavaMajor } from '../dist/mojang.js';
 import { readZipEntry, zipContains } from '../dist/zip.js';
 import { compareBuilds, findLoader, loaderBuild, parseLoader } from '../dist/loaders.js';
 import { compose, parseMojang, parseTiny, parseTsrg } from '../dist/names.js';
-import { syncMods } from '../dist/mods.js';
+import { resolveExtensions, syncMods } from '../dist/mods.js';
 import { parseOptions, serializeOptions, writeOptions, defaultOptions } from '../dist/options.js';
 import { bypassProxy, javaProxyProps, proxyFor } from '../dist/net.js';
 import { resolvePaths, safeProbeDir } from '../dist/paths.js';
@@ -341,4 +341,18 @@ test('syncMods replaces only the mods Calcite placed', async () => {
 test('Client rejects mods without a loader', () => {
   assert.throws(() => new Client({ name: 'm', version: '1.21.11', mods: ['x.jar'], paths: resolvePaths('/tmp/calcite-unused') }), /loader/);
   assert.throws(() => new Client({ name: 'm', version: '1.21.11', loader: 'quilt', paths: resolvePaths('/tmp/calcite-unused') }), /Unknown mod loader/);
+});
+
+test('resolveExtensions accepts local jars and rejects missing ones', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'calcite-ext-'));
+  try {
+    const jar = join(dir, 'e.jar');
+    await writeFile(jar, 'x');
+    const paths = resolvePaths(join(dir, 'home'));
+    assert.deepEqual(await resolveExtensions(paths, [jar, jar, ' ']), [jar]);
+    await assert.rejects(resolveExtensions(paths, [join(dir, 'missing.jar')]), (e) => e.code === 'extension_not_found');
+    await assert.rejects(resolveExtensions(paths, [dir]), (e) => e.code === 'extension_not_found');
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
 });

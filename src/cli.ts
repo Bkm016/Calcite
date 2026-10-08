@@ -124,6 +124,7 @@ program
   .option('-V, --mc-version <version>', 'Minecraft version, "release" or "snapshot"', 'release')
   .option('-l, --loader <loader>', 'mod loader: fabric, forge or neoforge, optionally @version (e.g. fabric@0.19.5)')
   .option('--mod <spec>', 'mod jar, folder, URL or modrinth:<project>[@version] (repeatable; needs --loader)', collect, [])
+  .option('--ext <jar>', 'probe extension jar or URL (repeatable)', collect, [])
   .option('-u, --username <name>', 'offline username (default: the client name)')
   .option('-m, --microsoft [account]', 'use a stored Microsoft account (primary one, or by name)')
   .addOption(new Option('-r, --render <mode>', 'renderer mode').choices(['on-demand', 'always', 'off']).default('on-demand'))
@@ -140,6 +141,7 @@ program
       version: o.mcVersion,
       loader: o.loader,
       mods: o.mod,
+      extensions: o.ext,
       server,
       account,
       render: o.render as RenderMode,
@@ -150,6 +152,7 @@ program
     });
     client.on('phase', (p) => process.stderr.write(`[${p}]\n`));
     client.on('chat', (c) => out(c.message));
+    client.on('extension', (e) => process.stderr.write(`[event ${e.name}] ${JSON.stringify(e.data)}\n`));
     let stopping = false;
     const stop = async (code = 0) => {
       if (stopping) return;
@@ -169,7 +172,8 @@ program
     process.stderr.write(
       'Ready. Type chat, /command, or :state :ents [radius] :shot [file] :render on|off :respawn :quit\n' +
         'Actions: :look yaw pitch | :lookat x y z | :goto x z | :move forward,jump [ticks] | :stop | :attack [id] | :use [id | x y z] [hold]\n' +
-        '         :dig x y z | :block x y z | :target | :inv | :slot n | :container | :click slot [button] [mode] | :close | :drop [all]\n',
+        '         :dig x y z | :block x y z | :target | :inv | :slot n | :container | :click slot [button] [mode] | :close | :drop [all]\n' +
+        'Extensions: :ext (list commands) | :call <name> [json args]\n',
     );
     const rl = createInterface({ input: process.stdin });
     rl.on('close', () => void stop());
@@ -192,6 +196,15 @@ program
         } else if (line.startsWith(':render')) {
           await client.setRender(line.endsWith('on'));
         } else if (line === ':respawn') await client.respawn();
+        else if (line === ':ext') {
+          const { commands, extensions } = await client.extensions();
+          for (const x of extensions) out(`jar ${x.jar}: ${x.error ? `failed: ${x.error}` : x.ids.join(', ')}`);
+          for (const c of commands) out(`${c.name}\t${c.description ?? ''}${c.schema ? `\targs ${JSON.stringify(c.schema)}` : ''}`);
+          if (!commands.length) out('no extension commands');
+        } else if (line.startsWith(':call ')) {
+          const m = /^:call\s+(\S+)\s*(.*)$/.exec(line)!;
+          out(JSON.stringify(await client.call(m[1], m[2] ? (JSON.parse(m[2]) as Record<string, unknown>) : {}), null, 2));
+        }
         else if (line.startsWith(':') && (await action(client, line))) {
           // handled
         } else if (line.startsWith('/')) await client.command(line.slice(1));
@@ -312,9 +325,10 @@ program
   .description('Run the MCP server on stdio')
   .addOption(new Option('-r, --render <mode>', 'default renderer mode').choices(['on-demand', 'always', 'off']))
   .option('--memory <size>', 'default max heap')
+  .option('--ext <jar>', 'probe extension jar or URL loaded into every client (repeatable)', collect, [])
   .action(async (o) => {
     // stdout belongs to the protocol; logs go to stderr
-    await runMcpStdio({ defaults: { render: o.render, memory: o.memory } });
+    await runMcpStdio({ defaults: { render: o.render, memory: o.memory, extensions: o.ext.length ? o.ext : undefined } });
   });
 
 program.parseAsync().catch(fail);

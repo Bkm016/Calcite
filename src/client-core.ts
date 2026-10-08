@@ -10,7 +10,7 @@ import { installProbe, prepareGame, type PreparedGame } from './install.js';
 import { parseLoader } from './loaders.js';
 import { acquireLock } from './lock.js';
 import { logger } from './log.js';
-import { resolveMods, syncMods, type ModFile } from './mods.js';
+import { resolveExtensions, resolveMods, syncMods, type ModFile } from './mods.js';
 import { javaProxyProps } from './net.js';
 import { supportsQuickPlay } from './mojang.js';
 import { defaultOptions, writeOptions } from './options.js';
@@ -24,6 +24,7 @@ import {
   type ChatLine,
   type ClientOptions,
   type ClientStatus,
+  type ExtensionEvent,
   type GameState,
   type LogLine,
   type Phase,
@@ -34,6 +35,7 @@ import {
 const NAME_RE = /^[A-Za-z0-9_.-]{1,64}$/;
 const MAX_LOG = 5000;
 const MAX_CHAT = 1000;
+const MAX_EVENTS = 1000;
 
 /** Escapes a value for a java.util.Properties file. */
 function propValue(value: string): string {
@@ -70,6 +72,8 @@ export abstract class ClientCore extends EventEmitter {
   protected phaseValue: Phase = 'idle';
   protected logs: LogLine[] = [];
   protected chats: ChatLine[] = [];
+  protected events: ExtensionEvent[] = [];
+  private extensionJars: string[] = [];
   protected seq = 0;
   protected probe: ProbeServer | null = null;
   private run: HmcRun | null = null;
@@ -202,6 +206,8 @@ export abstract class ClientCore extends EventEmitter {
     this.mods = game.loader ? await resolveMods(this.paths, this.options.mods ?? [], game.json.id, game.loader.kind) : [];
     await syncMods(this.gameDir, this.mods);
     for (const m of this.mods) this.note(`mod ${m.name} (${m.source})`);
+    this.extensionJars = await resolveExtensions(this.paths, this.options.extensions ?? []);
+    for (const jar of this.extensionJars) this.note(`extension ${jar}`);
   }
 
   private resolveHeadless(): boolean {
@@ -219,10 +225,21 @@ export abstract class ClientCore extends EventEmitter {
 
     if (this.server) {
       this.setPhase('waiting_for_server');
-      const deadline = Date.now() + (this.options.waitForServerMs ?? 120_000);
+      const waitMs = this.options.waitForServerMs ?? 120_000;
+      const since = Date.now();
+      let reported = since;
       while (!(await tcpReachable(this.server.host, this.server.port))) {
         if (this.stopping) throw new CalciteError('stopped', 'Stopped while waiting for the server');
-        if (Date.now() > deadline) throw new CalciteError('server_unreachable', `Server ${this.server.host}:${this.server.port} is not reachable`);
+        const waited = Date.now() - since;
+        if (waited > waitMs) {
+          throw new CalciteError('server_unreachable', `Server ${this.server.host}:${this.server.port} is not reachable (waited ${Math.round(waited / 1000)}s)`);
+        }
+        if (Date.now() - reported >= 10_000) {
+          reported = Date.now();
+          const msg = `still waiting for ${this.server.host}:${this.server.port} (${Math.round(waited / 1000)}s of ${Math.round(waitMs / 1000)}s)`;
+          this.note(msg);
+          this.log.info(msg);
+        }
         await sleep(2000);
       }
     }
@@ -232,12 +249,20 @@ export abstract class ClientCore extends EventEmitter {
     await this.probe.listen();
     this.probe.on('connected', () => this.onProbeConnected());
     this.probe.on('disconnected', () => this.note('probe disconnected'));
+    this.probe.on('event', (e: { name: string; data: unknown; time: number }) => {
+      const event: ExtensionEvent = { seq: ++this.seq, time: e.time, name: e.name, data: e.data };
+      this.events.push(event);
+      if (this.events.length > MAX_EVENTS) this.events.splice(0, this.events.length - MAX_EVENTS);
+      this.emit('extension', event);
+    });
     this.probeConfig = join(this.paths.probe, `${this.options.name}-${randomBytes(6).toString('hex')}.properties`);
     const cfg = [
       `port=${this.probe.port}`,
       `token=${this.probe.token}`,
       // name tables the probe tries in order (a mapping file or "official")
       ...(names.kind === 'probe' ? names.candidates.map((c, i) => `mappings.${i + 1}=${propValue(c)}`) : []),
+      `version=${propValue(json.id)}`,
+      ...this.extensionJars.map((jar, i) => `extensions.${i + 1}=${propValue(jar)}`),
       `headless=${this.headlessValue}`,
       `render=${this.render === 'always' ? 'on' : 'off'}`,
       'exitOnDisconnect=true',
@@ -509,6 +534,7 @@ export abstract class ClientCore extends EventEmitter {
       version: this.game?.json.id ?? this.options.version,
       loader: this.game?.loader ? `${this.game.loader.kind}@${this.game.loader.build}` : this.options.loader,
       mods: this.mods.length ? this.mods.map((m) => m.name) : undefined,
+      extensions: this.extensionJars.length ? this.extensionJars : undefined,
       phase: this.phaseValue,
       render: this.render,
       headless: this.headlessValue,

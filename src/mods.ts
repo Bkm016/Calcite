@@ -155,3 +155,30 @@ export async function syncMods(gameDir: string, mods: ModFile[]): Promise<void> 
   for (const m of mods) await copyFile(m.file, join(dir, m.name));
   await writeFile(manifest, JSON.stringify({ files: [...wanted] }, null, 2));
 }
+
+/** Resolves extension specs (local jars or http(s) URLs, downloaded once) to absolute jar paths. */
+export async function resolveExtensions(paths: CalcitePaths, specs: string[]): Promise<string[]> {
+  const jars: string[] = [];
+  for (const raw of specs) {
+    const spec = raw.trim();
+    if (!spec) continue;
+    if (/^https?:\/\//i.test(spec)) {
+      const name = safeName(decodeURIComponent(new URL(spec).pathname));
+      const file = join(paths.mods, 'extensions', createHash('sha256').update(spec).digest('hex').slice(0, 16), name);
+      await download(spec, file);
+      jars.push(file);
+      continue;
+    }
+    const file = resolve(spec);
+    let info;
+    try {
+      info = await stat(file);
+    } catch {
+      throw new CalciteError('extension_not_found', `Extension jar not found: ${file}`);
+    }
+    if (!info.isFile()) throw new CalciteError('extension_not_found', `Extension is not a file: ${file}`);
+    safeName(file);
+    jars.push(file);
+  }
+  return [...new Set(jars)];
+}

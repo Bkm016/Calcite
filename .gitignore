@@ -4,3 +4,5 @@ vendor/*.jar
 probe/build/
 *.log
 .calcite/
+examples/*/build/
+examples/*/*.jar

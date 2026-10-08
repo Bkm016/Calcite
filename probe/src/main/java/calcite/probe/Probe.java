@@ -13,11 +13,16 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.TimeUnit;
+
+import calcite.probe.api.Calcite;
+import calcite.probe.api.CalciteException;
+import calcite.probe.api.Handler;
 
 /**
  * Java agent loaded into the Minecraft client by Calcite.
@@ -26,11 +31,13 @@ import java.util.concurrent.TimeUnit;
  * {@code mappings.2}, ... (name tables to try in order: a mapping file in Mojang's format, or {@code official} for a
  * game running with official names; {@code mappings} is read when there are none), {@code headless} (true when
  * HeadlessMC replaced the renderer), {@code render} ({@code on}|{@code off}: initial world rendering),
- * {@code exitOnDisconnect}.</p>
+ * {@code exitOnDisconnect}, {@code extensions.1}, {@code extensions.2}, ... (extension jars, see {@link Extensions}),
+ * {@code version} (Minecraft version id).</p>
  *
  * <p>Protocol: one JSON object per line over TCP to 127.0.0.1:port. The probe sends a {@code hello} with the token,
  * then answers requests {@code {"id":1,"op":"state","args":{}}} with {@code {"id":1,"ok":true,"result":...}} or
- * {@code {"id":1,"ok":false,"code":"...","error":"..."}}.</p>
+ * {@code {"id":1,"ok":false,"code":"...","error":"..."}}; extension events are sent as
+ * {@code {"type":"event","name":"...","data":...,"time":...}}.</p>
  */
 public final class Probe {
 
@@ -53,6 +60,13 @@ public final class Probe {
     /** Loader of the game classes; probe threads use it as context loader (Forge's transformers resolve through it). */
     private volatile ClassLoader gameLoader;
     private final Object writeLock = new Object();
+    private volatile OutputStream current;
+    private final Extensions extensions = new Extensions(new Extensions.Sink() {
+        @Override
+        public void event(String name, Object data) {
+            sendEvent(name, data);
+        }
+    });
 
     private Probe(Map<String, String> args, Instrumentation instrumentation) {
         this.args = args;
@@ -69,6 +83,7 @@ public final class Probe {
 
     private static void start(String agentArgs, Instrumentation inst) {
         final Probe probe = new Probe(parseArgs(agentArgs), inst);
+        probe.extensions.publishBridge();
         Thread t = new Thread(new Runnable() {
             @Override
             public void run() {
@@ -216,6 +231,13 @@ public final class Probe {
                     }
                 }
             }, 10, 10, TimeUnit.MILLISECONDS);
+            List<String> jars = new ArrayList<String>();
+            for (int i = 1; args.containsKey("extensions." + i); i++) {
+                jars.add(args.get("extensions." + i));
+            }
+            if (!jars.isEmpty()) {
+                extensions.load(jars, gameLoader, new Base(g, ref));
+            }
             if ("off".equals(args.get("render")) && !g.headless()) {
                 r.setRender(false);
             }
@@ -251,6 +273,7 @@ public final class Probe {
         hello.put("protocol", PROTOCOL);
         hello.put("java", System.getProperty("java.version"));
         send(out, hello);
+        current = out;
         BufferedReader in = new BufferedReader(new InputStreamReader(socket.getInputStream(), StandardCharsets.UTF_8));
         String line;
         while ((line = in.readLine()) != null) {
@@ -265,7 +288,25 @@ public final class Probe {
                 }
             });
         }
+        current = null;
         socket.close();
+    }
+
+    private void sendEvent(String name, Object data) {
+        OutputStream out = current;
+        if (out == null) {
+            return;
+        }
+        Map<String, Object> event = new LinkedHashMap<String, Object>();
+        event.put("type", "event");
+        event.put("name", name);
+        event.put("data", data);
+        event.put("time", System.currentTimeMillis());
+        try {
+            send(out, event);
+        } catch (Throwable ignored) {
+            // connection closed
+        }
     }
 
     @SuppressWarnings("unchecked")
@@ -289,7 +330,8 @@ public final class Probe {
             response.clear();
             response.put("id", id);
             response.put("ok", false);
-            response.put("code", cause instanceof Game.ProbeException ? ((Game.ProbeException) cause).code : "error");
+            response.put("code", cause instanceof Game.ProbeException ? ((Game.ProbeException) cause).code
+                    : cause instanceof CalciteException ? ((CalciteException) cause).code() : "error");
             response.put("error", cause.getMessage() == null ? cause.toString() : cause.getMessage());
         }
         try {
@@ -299,6 +341,7 @@ public final class Probe {
         }
     }
 
+    @SuppressWarnings("unchecked")
     private Object dispatch(String op, Map<String, Object> a) throws Exception {
         if ("ping".equals(op)) {
             return "pong";
@@ -316,7 +359,18 @@ public final class Probe {
                 info.put("headless", game.headless());
                 info.put("renderToggle", render.renderToggleSupported());
             }
+            info.put("extensions", extensions.loaded());
             return info;
+        }
+        if ("ext.list".equals(op)) {
+            Map<String, Object> list = new LinkedHashMap<String, Object>();
+            list.put("commands", extensions.list());
+            list.put("extensions", extensions.loaded());
+            return list;
+        }
+        if ("ext.call".equals(op)) {
+            Object callArgs = a.get("args");
+            return extensions.call(str(a, "name"), callArgs instanceof Map ? (Map<String, Object>) callArgs : new HashMap<String, Object>());
         }
         Game g = game;
         if (g == null) {
@@ -409,6 +463,67 @@ public final class Probe {
             return inventory.drop(Boolean.TRUE.equals(a.get("all")));
         }
         throw new Game.ProbeException("unknown_op", "Unknown operation: " + op);
+    }
+
+    /** What extensions get from the probe (unscoped; {@link Extensions} adds the id prefix). */
+    private final class Base implements Calcite {
+        private final Game g;
+        private final Ref ref;
+
+        Base(Game g, Ref ref) {
+            this.g = g;
+            this.ref = ref;
+        }
+
+        @Override
+        public Ref ref() {
+            return ref;
+        }
+
+        @Override
+        public Object minecraft() {
+            return g.minecraft();
+        }
+
+        @Override
+        public String minecraftVersion() {
+            return args.get("version");
+        }
+
+        @Override
+        public boolean headless() {
+            return g.headless();
+        }
+
+        @Override
+        public <T> T onGameThread(Callable<T> task, long timeoutMs) throws Exception {
+            return g.onGameThread(task, timeoutMs);
+        }
+
+        @Override
+        public void command(String name, Handler handler) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void command(String name, String description, Map<String, Object> argsSchema, Handler handler) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void emit(String name, Object data) {
+            sendEvent(name, data);
+        }
+
+        @Override
+        public Object call(String op, Map<String, Object> callArgs) throws Exception {
+            return dispatch(op, callArgs == null ? new HashMap<String, Object>() : callArgs);
+        }
+
+        @Override
+        public void log(String message) {
+            System.out.println("[calcite] " + message);
+        }
     }
 
     private static String str(Map<String, Object> a, String key) {

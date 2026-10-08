@@ -18,6 +18,8 @@ public final class ProbeTests {
         identityMappings();
         jsonRoundTrip();
         agentArgs();
+        jsonArrays();
+        extensionsBridge();
         if (failures > 0) {
             System.err.println(failures + " test(s) failed");
             System.exit(1);
@@ -110,6 +112,62 @@ public final class ProbeTests {
         Map<String, String> file = Probe.parseArgs(f.getAbsolutePath());
         check("5".equals(file.get("port")), "file agent args");
         check("C:\\Users\\John Doe\\m,1.txt".equals(file.get("mappings")), "file args keep spaces and commas");
+    }
+
+    static void jsonArrays() {
+        check("[1,2,3]".equals(Json.write(new int[]{1, 2, 3})), "primitive array");
+        check("[\"a\",null]".equals(Json.write(new String[]{"a", null})), "object array");
+    }
+
+    @SuppressWarnings("unchecked")
+    static void extensionsBridge() throws Exception {
+        final List<String> events = new java.util.ArrayList<String>();
+        Extensions ext = new Extensions(new Extensions.Sink() {
+            @Override
+            public void event(String name, Object data) {
+                events.add(name + "=" + data);
+            }
+        });
+        ext.publishBridge();
+        Map<String, Object> bridge = (Map<String, Object>) System.getProperties().get(Extensions.BRIDGE_COMMANDS);
+        bridge.put("mod.echo", new java.util.function.Function<Map<String, Object>, Object>() {
+            @Override
+            public Object apply(Map<String, Object> a) {
+                return a.get("x");
+            }
+        });
+        Map<String, Object> meta = new java.util.HashMap<String, Object>();
+        meta.put("description", "ping");
+        meta.put("handler", new java.util.concurrent.Callable<Object>() {
+            @Override
+            public Object call() {
+                return "pong";
+            }
+        });
+        bridge.put("mod.ping", meta);
+        ext.register("x.add", null, null, new calcite.probe.api.Handler() {
+            @Override
+            public Object handle(Map<String, Object> a) {
+                return ((Number) a.get("a")).longValue() + 1;
+            }
+        }, "x");
+        Map<String, Object> args = new java.util.HashMap<String, Object>();
+        args.put("x", "hi");
+        args.put("a", 1L);
+        check("hi".equals(ext.call("mod.echo", args)), "bridge function");
+        check("pong".equals(ext.call("mod.ping", args)), "bridge map handler");
+        check(Long.valueOf(2).equals(ext.call("x.add", args)), "registered command");
+        List<Map<String, Object>> list = ext.list();
+        check(list.size() == 3 && "mod.echo".equals(list.get(0).get("name")) && "ping".equals(list.get(1).get("description"))
+                && "x".equals(list.get(2).get("source")), "command list");
+        try {
+            ext.call("nope", args);
+            check(false, "unknown command throws");
+        } catch (calcite.probe.api.CalciteException e) {
+            check("unknown_command".equals(e.code()), "unknown command code");
+        }
+        ((java.util.function.BiConsumer<String, Object>) System.getProperties().get(Extensions.BRIDGE_EMIT)).accept("mod.tick", 3);
+        check(events.size() == 1 && "mod.tick=3".equals(events.get(0)), "bridge emit");
     }
 
     static void check(boolean condition, String name) {
