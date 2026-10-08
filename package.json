@@ -1,0 +1,59 @@
+{
+  "name": "@bkm016/calcite",
+  "version": "0.1.0",
+  "description": "Drive a real Minecraft Java client from code or AI agents: launch, join servers, read client-side entities, chat, run commands and take screenshots. Ships a CLI and an MCP server.",
+  "type": "module",
+  "license": "MIT",
+  "author": "黑 <b@taboo.sh>",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/bkm016/Calcite.git"
+  },
+  "keywords": [
+    "minecraft",
+    "headless",
+    "testing",
+    "mcp",
+    "agent",
+    "client",
+    "headlessmc"
+  ],
+  "engines": {
+    "node": ">=20.18.1"
+  },
+  "bin": {
+    "calcite": "dist/cli.js"
+  },
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "vendor/calcite-probe.jar",
+    "README.md",
+    "THIRD_PARTY_NOTICES.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "npm run build:probe && npm run build:ts",
+    "build:ts": "tsc -p tsconfig.json",
+    "build:probe": "node scripts/build-probe.mjs",
+    "test": "npm run build && node --test test/*.test.mjs && node scripts/test-probe.mjs",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "prepack": "npm run build"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.1",
+    "commander": "^12.1.0",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "@types/node": "^20.19.43",
+    "typescript": "~5.9.3"
+  }
+}
