@@ -185,7 +185,6 @@ test('Feed keeps the newest entries and reads them by sequence', () => {
   assert.deepEqual(seqs(feed.since(0, (e) => e.even, 2)), [8, 10]);
   assert.equal(feed.find(7, (e) => e.even)?.seq, 8);
   assert.equal(feed.find(10, () => true), undefined);
-  assert.equal(feed.last()?.seq, 10);
   assert.deepEqual(new Feed(3).since(), []);
 });
 

@@ -187,7 +187,7 @@ export interface BlockMatch extends BlockPosition {
 export interface BlockSearch {
   /** Block ids or patterns: "oak_log", "minecraft:*_ore", "*planks" ("minecraft:" is implied). */
   blocks: string | string[];
-  /** Horizontal search radius in blocks (default 32, at most 128). */
+  /** Search radius around the player in blocks (default 32, at most 128). */
   radius?: number;
   /** Most matches to return, nearest first (default 16). */
   limit?: number;
@@ -230,7 +230,8 @@ export interface Surroundings {
   map: string[];
   /** World [x, z] of the map's first character. */
   mapOrigin: [number, number];
-  legend: Record<string, string>;
+  /** What the map characters mean. */
+  legend: string;
   /** Most common blocks around the player with the nearest position of each. */
   blocks: { id: string; count: number; nearest: [number, number, number] }[];
   entities: NearbyEntity[];

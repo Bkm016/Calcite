@@ -45,7 +45,7 @@ final class Crafting implements Ops.Module {
         ops.add("craft", a -> {
             long timeoutMs = a.millis("timeoutMs", 30000);
             Craft craft = new Craft(World.qualify(a.str("item")), Math.max(1, a.integer("count", 1)));
-            return controls.run(craft.timeout(timeoutMs), timeoutMs + 5000);
+            return controls.run(craft, timeoutMs);
         });
     }
 
@@ -136,8 +136,6 @@ final class Crafting implements Ops.Module {
                         enter(Phase.PLACE);
                     }
                     break;
-                default:
-                    break;
             }
         }
 
@@ -210,10 +208,10 @@ final class Crafting implements Ops.Module {
     /** The nearest crafting table within reach of the player's eyes, or null. */
     private int[] nearbyTable(Object mc, Object player) throws Exception {
         double[] eye = aim.eye(player);
-        int r = (int) Math.ceil(Aim.MAX_REACH) - 1;
+        int r = (int) Math.ceil(Aim.REACH);
         int ex = (int) Math.floor(eye[0]), ey = (int) Math.floor(eye[1]), ez = (int) Math.floor(eye[2]);
         int[] best = null;
-        double bestDistance = 4.5 * 4.5;
+        double bestDistance = Aim.REACH * Aim.REACH;
         for (int x = ex - r; x <= ex + r; x++) {
             for (int y = ey - r; y <= ey + r; y++) {
                 for (int z = ez - r; z <= ez + r; z++) {

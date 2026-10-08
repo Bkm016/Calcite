@@ -34,10 +34,6 @@ export class Feed<T extends Sequenced> {
     return undefined;
   }
 
-  last(): T | undefined {
-    return this.items.at(-1);
-  }
-
   /** Index of the first entry with a seq greater than {@code seq} (binary search; seqs only grow). */
   private firstAfter(seq: number): number {
     let lo = 0;

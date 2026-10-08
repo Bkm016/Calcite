@@ -214,8 +214,8 @@ final class Surroundings implements Ops.Module {
                 m.put("id", game.optCall(e, "getId"));
                 m.put("type", type);
                 m.put("name", game.text(game.optCall(e, "getName")));
-                m.put("offset", new double[]{round(p[0] - pos[0]), round(p[1] - pos[1]), round(p[2] - pos[2])});
-                m.put("distance", round(Math.sqrt((Double) n[2])));
+                m.put("offset", new double[]{Status.round(p[0] - pos[0], 1), Status.round(p[1] - pos[1], 1), Status.round(p[2] - pos[2], 1)});
+                m.put("distance", Status.round(Math.sqrt((Double) n[2]), 1));
                 double health = living != null && living.isInstance(e) ? game.health(e) : -1;
                 if (health >= 0) {
                     m.put("health", health);
@@ -266,9 +266,5 @@ final class Surroundings implements Ops.Module {
 
     private static int sq(int v) {
         return v * v;
-    }
-
-    private static double round(double v) {
-        return Math.round(v * 10) / 10.0;
     }
 }

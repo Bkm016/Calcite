@@ -60,7 +60,7 @@ export function registerActTools({ server, manager, tasks }: ToolContext): void 
     {
       title: 'Walk to a position',
       description:
-        'Finds a path through the loaded terrain and walks it: around walls, up steps, down drops of up to 3 blocks, across water, never into lava. Re-plans when pushed off the path. Returns arrived=false with a reason (no_path, stuck, timeout, damaged) when it cannot get there; with no_path it still gets as close as it can.',
+        'Finds a path through the loaded terrain and walks it: around walls, up steps, down drops of up to 3 blocks, across water, never into lava. Re-plans when pushed off the path. Returns arrived=false with a reason (no_path, stuck, off_path, timeout, damaged) when it cannot get there; with no_path it still gets as close as it can.',
       inputSchema: {
         client: clientName,
         x: z.number(),

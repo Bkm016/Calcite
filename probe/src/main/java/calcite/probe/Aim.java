@@ -7,7 +7,9 @@ import java.util.Locale;
 final class Aim {
 
     static final String[] FACES = {"down", "up", "north", "south", "west", "east"};
-    /** Generous reach limit; the server enforces the real one. */
+    /** Survival reach from the eyes. */
+    static final double REACH = 4.5;
+    /** Generous limit for targeting; the server enforces the real reach. */
     static final double MAX_REACH = 6.0;
 
     private final Game game;
@@ -87,7 +89,7 @@ final class Aim {
     void checkReach(Object player, double x, double y, double z) {
         double d = Math.sqrt(Status.distanceSq(eye(player), new double[]{x, y, z}));
         if (d > MAX_REACH) {
-            throw new ProbeException("out_of_reach", String.format(Locale.ROOT, "Target is %.1f blocks away; walk closer (reach is about 4.5)", d));
+            throw new ProbeException("out_of_reach", String.format(Locale.ROOT, "Target is %.1f blocks away; walk within %.1f", d, REACH));
         }
     }
 

@@ -2,6 +2,7 @@ package calcite.probe;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -56,8 +57,9 @@ final class Controls implements Ops.Module {
 
     // ---------------------------------------------------------------- behaviors
 
-    /** Starts {@code b} on the game thread and waits for its result. */
+    /** Starts {@code b} on the game thread and waits for its result; it ends itself after about {@code timeoutMs}. */
     Map<String, Object> run(final Behavior b, long timeoutMs) throws Exception {
+        b.timeout(timeoutMs);
         game.withPlayer((mc, player) -> {
             b.start(mc, player);
             cancel("Interrupted by " + b.name);
@@ -70,7 +72,8 @@ final class Controls implements Ops.Module {
             return null;
         });
         try {
-            return b.done.get(timeoutMs, TimeUnit.MILLISECONDS);
+            // the behavior's own timeout normally fires first and reports how far it got
+            return b.done.get(timeoutMs + 5000, TimeUnit.MILLISECONDS);
         } catch (TimeoutException e) {
             game.onGameThread(() -> {
                 if (behavior == b) {
@@ -79,7 +82,7 @@ final class Controls implements Ops.Module {
                 return null;
             }, Game.TIMEOUT_MS);
             throw new ProbeException("timeout", "Action timed out after " + timeoutMs + "ms");
-        } catch (java.util.concurrent.ExecutionException e) {
+        } catch (ExecutionException e) {
             throw ProbeException.unwrap(e);
         }
     }

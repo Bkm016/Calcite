@@ -141,9 +141,9 @@ final class Inventory implements Ops.Module {
 
     private static Double fraction(Object v, int pixels) {
         if (v instanceof Float || v instanceof Double) {
-            return Math.round(((Number) v).doubleValue() * 100) / 100.0;
+            return Status.round(((Number) v).doubleValue(), 2);
         }
-        return v instanceof Number ? Math.round(((Number) v).doubleValue() / pixels * 100) / 100.0 : null;
+        return v instanceof Number ? Status.round(((Number) v).doubleValue() / pixels, 2) : null;
     }
 
     private Map<String, Object> click(final int slot, final int button, final String mode) throws Exception {

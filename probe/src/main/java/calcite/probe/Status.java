@@ -140,4 +140,9 @@ final class Status implements Ops.Module {
         double dx = a[0] - b[0], dy = a[1] - b[1], dz = a[2] - b[2];
         return dx * dx + dy * dy + dz * dz;
     }
+
+    static double round(double v, int decimals) {
+        double scale = Math.pow(10, decimals);
+        return Math.round(v * scale) / scale;
+    }
 }

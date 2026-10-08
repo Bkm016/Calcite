@@ -46,7 +46,7 @@ final class Navigator implements Ops.Module {
             Goal goal = new Goal(a.num("x"), y == null ? Double.NaN : y, a.num("z"), Math.max(0.2, a.num("range", 0.5)));
             long timeoutMs = a.millis("timeoutMs", 60000);
             Walk walk = new Walk(goal, a.flag("sprint", true), a.flag("direct", false));
-            return controls.run(walk.timeout(timeoutMs).stopOnDamage(a.flag("stopOnDamage", false)), timeoutMs + 5000);
+            return controls.run(walk.stopOnDamage(a.flag("stopOnDamage", false)), timeoutMs);
         });
     }
 
@@ -205,7 +205,7 @@ final class Navigator implements Ops.Module {
         Map<String, Object> progress(Object player) {
             Map<String, Object> out = new LinkedHashMap<String, Object>();
             out.put("mode", direct ? "direct" : "path");
-            out.put("distance", round(remaining(game.position(player))));
+            out.put("distance", Status.round(remaining(game.position(player)), 2));
             if (path != null) {
                 out.put("waypoint", index);
                 out.put("waypoints", path.steps.size());
@@ -227,7 +227,7 @@ final class Navigator implements Ops.Module {
             if (reason != null) {
                 out.put("reason", reason);
             }
-            out.put("distance", round(remaining(pos)));
+            out.put("distance", Status.round(remaining(pos), 2));
             out.put("x", pos[0]);
             out.put("y", pos[1]);
             out.put("z", pos[2]);
@@ -241,9 +241,5 @@ final class Navigator implements Ops.Module {
     private static double horizontal(double[] pos, double x, double z) {
         double dx = x - pos[0], dz = z - pos[2];
         return Math.sqrt(dx * dx + dz * dz);
-    }
-
-    private static double round(double v) {
-        return Math.round(v * 100) / 100.0;
     }
 }

@@ -34,7 +34,6 @@ export async function runE2E(title, scenario, { platformRadius = 8 } = {}) {
   const failures = [];
   const t = {
     client,
-    version,
     check(label, ok, detail) {
       console.log(`${ok ? 'PASS' : 'FAIL'} ${label}${detail === undefined ? '' : ` ${JSON.stringify(detail)}`}`);
       if (!ok) failures.push(label);

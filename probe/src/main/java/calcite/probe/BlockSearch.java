@@ -270,7 +270,7 @@ final class BlockSearch implements Ops.Module {
             m.put("y", y);
             m.put("z", z);
             m.put("id", id);
-            m.put("distance", Math.round(Math.sqrt(distanceSq) * 10) / 10.0);
+            m.put("distance", Status.round(Math.sqrt(distanceSq), 1));
             return m;
         }
     }

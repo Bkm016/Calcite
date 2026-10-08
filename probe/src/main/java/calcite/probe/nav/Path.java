@@ -35,13 +35,10 @@ public final class Path {
     public final List<Step> steps;
     /** False when the search ran out of budget or options and the path only gets closer to the goal. */
     public final boolean complete;
-    /** Number of block spaces the search expanded. */
-    public final int explored;
 
-    Path(List<Step> steps, boolean complete, int explored) {
+    Path(List<Step> steps, boolean complete) {
         this.steps = Collections.unmodifiableList(steps);
         this.complete = complete;
-        this.explored = explored;
     }
 
     /** True when the path does not get the player anywhere. */

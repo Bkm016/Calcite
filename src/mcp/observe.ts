@@ -26,7 +26,7 @@ export function registerObserveTools({ server, manager }: ToolContext): void {
       inputSchema: {
         client: clientName,
         blocks: z.union([z.string(), z.array(z.string()).min(1)]).describe('Block ids or patterns ("*" matches anything; "minecraft:" is implied)'),
-        radius: z.number().int().min(1).max(128).default(32).describe('Horizontal radius in blocks'),
+        radius: z.number().int().min(1).max(128).default(32).describe('Search radius around the player in blocks'),
         limit: z.number().int().positive().max(256).default(16),
       },
     },

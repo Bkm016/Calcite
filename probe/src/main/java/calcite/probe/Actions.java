@@ -31,8 +31,8 @@ final class Actions implements Ops.Module {
         ops.add("look", a -> look(a.optNum("yaw"), a.optNum("pitch"), a.has("x") ? new double[]{a.num("x"), a.num("y"), a.num("z")} : null));
         ops.add("attack", a -> attack(a.optInt("entityId")));
         ops.add("use", a -> use(a.optInt("entityId"), a.optBlockPos(), a.str("face", null), a.integer("holdTicks", 0)));
-        ops.add("dig", a -> controls.run(new Dig(a.blockPos(), a.str("face", null))
-                .timeout(a.millis("timeoutMs", 30000)).stopOnDamage(a.flag("stopOnDamage", false)), a.millis("timeoutMs", 30000) + 5000));
+        ops.add("dig", a -> controls.run(new Dig(a.blockPos(), a.str("face", null)).stopOnDamage(a.flag("stopOnDamage", false)),
+                a.millis("timeoutMs", 30000)));
     }
 
     Map<String, Object> look(final Double yaw, final Double pitch, final double[] at) throws Exception {

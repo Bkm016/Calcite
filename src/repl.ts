@@ -12,12 +12,12 @@ interface ReplCommand {
 
 const out = (line = '') => process.stdout.write(`${line}\n`);
 
+const usage = (name: string) => new CalciteError('bad_request', `usage: :${name} ${COMMANDS[name].args ?? ''}`);
+
 /** The first {@code count} arguments as numbers; fails with the command's usage otherwise. */
 function numbers(args: string[], count: number, name: string): number[] {
   const n = args.slice(0, count).map(Number);
-  if (n.length < count || n.some((v) => !Number.isFinite(v))) {
-    throw new CalciteError('bad_request', `usage: :${name} ${COMMANDS[name].args ?? ''}`);
-  }
+  if (n.length < count || n.some((v) => !Number.isFinite(v))) throw usage(name);
   return n;
 }
 
@@ -27,7 +27,7 @@ function printSurroundings(s: Surroundings): void {
   out(`${s.x.toFixed(1)} ${s.y.toFixed(1)} ${s.z.toFixed(1)} facing ${s.facing} in ${s.biome ?? '?'} (${s.dimension ?? '?'}), time ${s.timeOfDay ?? '?'}`);
   out(`standing on ${s.standingOn ?? '?'}${s.in ? `, in ${s.in}` : ''}`);
   for (const row of s.map) out(`  ${row}`);
-  out(`  ${Object.entries(s.legend).map(([k, v]) => `${k} ${v}`).join('  ')}`);
+  out(`  ${s.legend}`);
   for (const b of s.blocks) out(`${String(b.count).padStart(5)}  ${b.id}  nearest ${b.nearest.join(' ')}`);
   for (const e of s.entities) out(`entity ${e.id} ${e.type}${e.name ? ` "${e.name}"` : ''} at ${e.distance}m`);
 }
@@ -52,7 +52,7 @@ const COMMANDS: Record<string, ReplCommand> = {
     args: '<block> [radius]',
     help: 'find blocks by id or pattern (*_ore)',
     run: (c, [blocks, radius]) => {
-      if (!blocks) throw new CalciteError('bad_request', 'usage: :find <block> [radius]');
+      if (!blocks) throw usage('find');
       return c.findBlocks({ blocks, radius: optionalNumber(radius) });
     },
   },
@@ -133,7 +133,7 @@ const COMMANDS: Record<string, ReplCommand> = {
     args: '<item> [count]',
     help: 'craft from the inventory',
     run: (c, [item, count]) => {
-      if (!item) throw new CalciteError('bad_request', 'usage: :craft <item> [count]');
+      if (!item) throw usage('craft');
       return c.craft(item, { count: optionalNumber(count) });
     },
   },
@@ -145,10 +145,11 @@ const COMMANDS: Record<string, ReplCommand> = {
   },
   transfer: {
     args: '<item> [count] [inventory]',
-    help: 'move items into (or out of) the open container',
-    run: (c, [item, count, to]) => {
-      if (!item) throw new CalciteError('bad_request', 'usage: :transfer <item> [count] [inventory]');
-      return c.transfer(item, { count: count && count !== 'all' ? Number(count) : undefined, to: to === 'inventory' ? 'inventory' : 'container' });
+    help: 'move items into the open container (or back into the inventory)',
+    run: (c, [item, ...rest]) => {
+      if (!item) throw usage('transfer');
+      const count = rest.map(Number).find(Number.isFinite);
+      return c.transfer(item, { count, to: rest.includes('inventory') ? 'inventory' : 'container' });
     },
   },
   close: { help: 'close the container', run: (c) => c.closeContainer() },
@@ -167,7 +168,7 @@ const COMMANDS: Record<string, ReplCommand> = {
     args: '<name> [json args]',
     help: 'call an extension command',
     run: (c, [name], rest) => {
-      if (!name) throw new CalciteError('bad_request', 'usage: :call <name> [json args]');
+      if (!name) throw usage('call');
       const json = rest.slice(name.length).trim();
       return c.call(name, json ? (JSON.parse(json) as Record<string, unknown>) : {});
     },
@@ -176,10 +177,10 @@ const COMMANDS: Record<string, ReplCommand> = {
 };
 
 function help(): string {
-  const usage = Object.entries(COMMANDS).map(([name, c]) => [`:${name} ${c.args ?? ''}`, c.help]);
-  usage.push([':quit', 'stop the client']);
-  const width = Math.max(...usage.map(([u]) => u.length));
-  return ['Type chat, /command or:', ...usage.map(([u, h]) => `  ${u.padEnd(width)}  ${h}`)].join('\n');
+  const lines = Object.entries(COMMANDS).map(([name, c]) => [`:${name} ${c.args ?? ''}`, c.help]);
+  lines.push([':quit', 'stop the client']);
+  const width = Math.max(...lines.map(([u]) => u.length));
+  return ['Type chat, /command or:', ...lines.map(([u, h]) => `  ${u.padEnd(width)}  ${h}`)].join('\n');
 }
 
 async function execute(client: Client, line: string): Promise<void> {

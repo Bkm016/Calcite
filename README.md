@@ -201,7 +201,7 @@ claude mcp add calcite -- npx -y @bkm016/calcite mcp
 | `set_render` | 开启或关闭持续渲染 |
 | `respawn` | 死亡后重生 |
 | `look` | 设置视角，或看向指定坐标 |
-| `walk_to` | A* 寻路走到指定坐标，返回是否到达及失败原因（`no_path`、`stuck`、`timeout`、`damaged`） |
+| `walk_to` | A* 寻路走到指定坐标，返回是否到达及失败原因（`no_path`、`stuck`、`off_path`、`timeout`、`damaged`） |
 | `move` | 按住移动、跳跃、潜行、疾跑等按键若干 tick |
 | `stop_actions` | 停止所有持续操作并松开按键，正在运行的长时操作以 `cancelled` 结束 |
 | `get_task` | 查询正在运行的长时操作的进度，以及后台任务的结果；`waitSeconds` 可等待其结束 |
@@ -326,7 +326,7 @@ for (const item of chest.items.filter((i) => i.slot < chest.containerSlots)) {
 await bot.closeContainer();
 
 await bot.craft('oak_planks', { count: 8 });                // 背包合成格
-await bot.craft('wooden_pickaxe');                          // 自动打开 6 格内的工作台
+await bot.craft('wooden_pickaxe');                          // 自动打开 4.5 格内的工作台
 await bot.use({ block: furnacePos });                       // 打开熔炉
 await bot.container({ waitMs: 3000 });
 await bot.transfer('raw_iron', { slot: 0 });                // 原料放入输入槽
@@ -335,7 +335,7 @@ await bot.transfer('coal');                                 // 不指定槽位�
 
 容器槽位编号与原版一致：容器自身的槽位在前（`0` 到 `containerSlots - 1`），玩家背包在后；`item.inventorySlot` 给出对应的背包槽位。`click` 的 `mode` 可取 `pickup`（默认，`button` 0 为左键、1 为右键）、`quick_move`（Shift+点击）、`swap`（数字键，`button` 为快捷栏序号 0–8）、`clone`、`throw`、`quick_craft`、`pickup_all`；槽位 `-999` 表示点击界面外部。未打开容器时，`click` 作用于玩家自身的背包界面。
 
-操作有距离限制（6 格）：目标过远时返回 `out_of_reach` 错误，需先用 `walkTo` 靠近。
+操作距离与生存模式一致（约 4.5 格），目标超过 6 格时返回 `out_of_reach` 错误，需先用 `walkTo` 靠近。
 
 ### 游戏事件
 

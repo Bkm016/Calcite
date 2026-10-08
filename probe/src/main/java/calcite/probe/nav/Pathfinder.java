@@ -92,7 +92,7 @@ public final class Pathfinder {
             }
             n.closed = true;
             if (goal.reached(n.x, n.floor, n.z)) {
-                return new Path(trace(n), true, explored);
+                return new Path(trace(n), true);
             }
             if (n.h < best.h || n.h == best.h && n.g < best.g) {
                 best = n;
@@ -102,7 +102,7 @@ public final class Pathfinder {
             }
             expand(n);
         }
-        return new Path(trace(best), false, explored);
+        return new Path(trace(best), false);
     }
 
     /**
