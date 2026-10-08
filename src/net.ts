@@ -62,6 +62,38 @@ export function proxyFor(target: URL): URL | undefined {
   return new URL(raw.includes('://') ? raw : `http://${raw}`);
 }
 
+/**
+ * Java system properties that route a JVM (HeadlessMC, the game) through the HTTPS_PROXY / HTTP_PROXY / NO_PROXY
+ * proxies; Java ignores those variables. Proxy credentials are not supported by Java's CONNECT handling.
+ */
+export function javaProxyProps(): Record<string, string> {
+  const props: Record<string, string> = {};
+  const parse = (raw: string | undefined) => {
+    if (!raw) return undefined;
+    try {
+      const url = new URL(raw.includes('://') ? raw : `http://${raw}`);
+      return { host: url.hostname.replace(/^\[|\]$/g, ''), port: url.port || (url.protocol === 'https:' ? '443' : '80') };
+    } catch {
+      return undefined;
+    }
+  };
+  const https = parse(env('HTTPS_PROXY') ?? env('HTTP_PROXY'));
+  const http = parse(env('HTTP_PROXY'));
+  if (https) Object.assign(props, { 'https.proxyHost': https.host, 'https.proxyPort': https.port });
+  if (http) Object.assign(props, { 'http.proxyHost': http.host, 'http.proxyPort': http.port });
+  if (https || http) {
+    // Java patterns: "*.example.com", "localhost"; CIDR rules have no equivalent and are skipped
+    const hosts = ['localhost', '127.*', '[::1]'];
+    for (const rule of (env('NO_PROXY') ?? '').split(/[\s,]+/)) {
+      const r = rule.trim().replace(/:\d+$/, '');
+      if (!r || r.includes('/')) continue;
+      hosts.push(r === '*' ? '*' : r.startsWith('.') ? `*${r}` : r);
+    }
+    props['http.nonProxyHosts'] = [...new Set(hosts)].join('|');
+  }
+  return props;
+}
+
 function proxyAuth(proxy: URL): Record<string, string> {
   if (!proxy.username) return {};
   const cred = `${decodeURIComponent(proxy.username)}:${decodeURIComponent(proxy.password)}`;
@@ -120,7 +152,11 @@ async function getOnce(url: URL, { timeoutMs = 60_000, idleMs = 120_000 }: Reque
   };
   if (proxy && url.protocol === 'https:') {
     const socket = await tunnel(proxy, url, timeoutMs);
-    options = { ...options, agent: false, createConnection: () => socket };
+    // No `agent` here: with `agent: false` Node 24 creates a fresh Agent and ignores `createConnection`, connecting
+    // directly instead of through the tunnel. Without an agent the Host header falls back to port 80 unless
+    // `defaultPort` is set, so set both explicitly.
+    options = { ...options, defaultPort: 443, createConnection: () => socket };
+    headers.host = url.host;
   } else if (proxy) {
     // Plain HTTP through a proxy: absolute-form request target.
     mod = proxy.protocol === 'https:' ? https : http;

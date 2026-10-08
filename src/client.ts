@@ -4,12 +4,13 @@ import { copyFile, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises
 import { Socket } from 'node:net';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { accountsLock, listAccounts } from './accounts.js';
+import { prepareAccount, syncAccount } from './accounts.js';
 import { acquireDisplay, which, type DisplayLease } from './display.js';
-import { ensureHmc, ensureHmcHome, killTree, runHmc, type HmcRun } from './hmc.js';
-import { ensureJava, type JavaInstall } from './java.js';
-import { acquireLock, withLock } from './lock.js';
+import { ensureHmc, hmcListEntry, hmcQuote, killTree, runHmc, writeHmcProfile, type HmcRun } from './hmc.js';
+import { ensureJava, ensureLauncherJava, type JavaInstall } from './java.js';
+import { acquireLock } from './lock.js';
 import { logger } from './log.js';
+import { javaProxyProps } from './net.js';
 import { ensureClientJar, getVersionJson, requiredJavaMajor, resolveNames, resolveVersion, supportsQuickPlay, type NameMode, type VersionJson } from './mojang.js';
 import { defaultOptions, writeOptions } from './options.js';
 import { resolvePaths, type CalcitePaths } from './paths.js';
@@ -323,19 +324,31 @@ export async function installVersion(spec: string, opts: InstallOptions = {}): P
   const clientJar = await ensureClientJar(paths, json);
   const names = await resolveNames(paths, json, clientJar);
   const java = await ensureJava(paths, requiredJavaMajor(json), { javaPath: opts.javaPath, allowDownload: opts.allowJavaDownload });
+  const launcherJava = await ensureLauncherJava(paths, { allowDownload: opts.allowJavaDownload });
   const hmcJar = await ensureHmc(paths);
-  await ensureHmcHome(paths);
   await installProbe(paths);
-  const run = runHmc({
-    javaPath: java.path,
-    hmcJar,
-    paths,
-    props: { 'hmc.mcdir': paths.minecraft, 'hmc.java.versions': java.path, 'hmc.offline': 'true' },
-    command: ['launch', json.id, '-prepare', '-lwjgl'],
-    onLine: opts.onLine,
-  });
-  const code = await run.exited;
-  if (code !== 0) throw new CalciteError('install_failed', `HeadlessMC exited with code ${code} while downloading ${json.id}`);
+  // HeadlessMC downloads the game files when launching; `-version` makes the game JVM exit right away.
+  const location = join(paths.hmcHome, 'install', randomBytes(6).toString('hex'));
+  try {
+    await writeHmcProfile(location, json.id, join(location, 'game'), java.major);
+    const run = runHmc({
+      javaPath: launcherJava.path,
+      hmcJar,
+      location,
+      props: {
+        'hmc.files.mc': paths.minecraft,
+        'hmc.files.game': join(location, 'game'),
+        'hmc.java.versions': hmcListEntry(java.path),
+        'hmc.java.download': 'false',
+      },
+      command: ['launch', json.id, '--offline', '--headless', `--jvm=${hmcQuote('-version')}`],
+      onLine: opts.onLine,
+    });
+    const code = await run.exited;
+    if (code !== 0) throw new CalciteError('install_failed', `HeadlessMC exited with code ${code} while downloading ${json.id}`);
+  } finally {
+    await rm(location, { recursive: true, force: true }).catch(() => undefined);
+  }
   return { id: json.id, java: java.version, probe: names.kind === 'unsupported' ? names.reason : 'supported' };
 }
 
@@ -362,6 +375,7 @@ export class Client extends EventEmitter {
   private releaseInstance: (() => Promise<void>) | null = null;
   private probeConfig: string | null = null;
   private java: JavaInstall | null = null;
+  private launcherJava: JavaInstall | null = null;
   private versionJson: VersionJson | null = null;
   private names: NameMode | null = null;
   private headlessValue = false;
@@ -479,12 +493,13 @@ export class Client extends EventEmitter {
       allowDownload: this.options.allowJavaDownload,
     });
     this.note(`java ${this.java.version} (${this.java.path}) for Minecraft ${this.versionJson.id}`);
+    this.launcherJava = await ensureLauncherJava(this.paths, { allowDownload: this.options.allowJavaDownload });
   }
 
   private resolveHeadless(): boolean {
     if (this.render === 'off') return true;
     if (this.account.type === 'offline' && process.platform !== 'linux') {
-      this.note('offline accounts can only render on Linux (HeadlessMC policy); running headless — use a Microsoft account for screenshots');
+      this.note('offline accounts can only render on Linux with Xvfb (HeadlessMC policy); running headless — use a Microsoft account for screenshots');
       return true;
     }
     return false;
@@ -494,7 +509,6 @@ export class Client extends EventEmitter {
     const json = this.versionJson!;
     const java = this.java!;
     const hmcJar = await ensureHmc(this.paths);
-    await ensureHmcHome(this.paths);
     const probeJar = await installProbe(this.paths);
     this.headlessValue = this.resolveHeadless();
 
@@ -537,32 +551,45 @@ export class Client extends EventEmitter {
       virtualDisplay = this.display.virtual;
     }
 
-    const jvmArgs = [`-Xmx${this.options.memory ?? '2G'}`, ...(this.options.jvmArgs ?? [])];
+    const proxyArgs = Object.entries(javaProxyProps()).map(([k, v]) => `-D${k}=${v}`);
+    const jvmArgs = [`-Xmx${this.options.memory ?? '2G'}`, ...proxyArgs, ...(this.options.jvmArgs ?? [])];
     if (this.names?.kind !== 'unsupported') jvmArgs.unshift(`-javaagent:${probeJar}=${this.probeConfig}`);
     const gameArgs = [...(this.options.gameArgs ?? [])];
     if (this.server) {
       if (supportsQuickPlay(json)) gameArgs.unshift('--quickPlayMultiplayer', `${this.server.host}:${this.server.port}`);
       else gameArgs.unshift('--server', this.server.host, '--port', String(this.server.port));
     }
-    for (const arg of [...jvmArgs, ...gameArgs]) {
-      if (/\s/.test(arg)) throw new CalciteError('bad_argument', `JVM/game arguments must not contain spaces: "${arg}"`);
-    }
     const offline = this.account.type === 'offline';
+    // a private HeadlessMC location per client: its own account selection, config and caches
+    const location = join(this.gameDir, '.headlessmc');
+    let accountName: string;
+    try {
+      accountName = await prepareAccount(this.paths, location, this.account);
+    } catch (err) {
+      const code = (err as { code?: string }).code;
+      throw code ? new CalciteError(code, (err as Error).message) : err;
+    }
+    await writeHmcProfile(location, json.id, this.gameDir, java.major);
     const props: Record<string, string> = {
-      'hmc.gamedir': this.gameDir,
-      'hmc.mcdir': this.paths.minecraft,
-      'hmc.java.versions': java.path,
-      'hmc.offline': String(offline),
-      'hmc.always.lwjgl.flag': String(this.headlessValue),
-      'hmc.check.xvfb': String(virtualDisplay),
-      'hmc.jvmargs': jvmArgs.join(' '),
-      'hmc.gameargs': gameArgs.join(' '),
-      'hmc.exit.on.failed.command': 'true',
+      'hmc.files.mc': this.paths.minecraft,
+      'hmc.files.game': this.gameDir,
+      'hmc.java.versions': hmcListEntry(java.path),
+      'hmc.java.download': 'false',
+      // HeadlessMC only lets offline accounts render when it sees Xvfb running
+      'hmc.xvfb.check': String(virtualDisplay),
     };
-    if (this.account.type === 'offline') props['hmc.offline.username'] = this.account.username;
-
-    const command = ['launch', json.id, '-jndi', '-lookup', ...(this.headlessValue ? ['-lwjgl', '-paulscode'] : [])];
+    const command = [
+      'launch',
+      json.id,
+      ...(offline ? ['--offline'] : []),
+      ...(this.headlessValue ? ['--headless'] : []),
+      `--jvm=${jvmArgs.map(hmcQuote).join(' ')}`,
+      ...(gameArgs.length ? [`--game=${gameArgs.map(hmcQuote).join(' ')}`] : []),
+    ];
     const env = { ...process.env, ...displayEnv };
+    const sync = () => {
+      if (!offline) void syncAccount(this.paths, location, accountName).catch((err) => this.note(`account sync failed: ${(err as Error).message}`));
+    };
 
     this.setPhase('starting');
     this.joinRequested = false;
@@ -586,15 +613,15 @@ export class Client extends EventEmitter {
         void killTree(run.child);
       };
       this.run = runHmc({
-        javaPath: java.path,
+        javaPath: this.launcherJava!.path,
         hmcJar,
-        paths: this.paths,
+        location,
         props,
         command,
         env,
         onLine: (line) => {
           this.pushLog('game', line);
-          if (/Launching version|Minecraft exited|LWJGL Version|Backend library/i.test(line)) launched();
+          if (/Setting user:|Minecraft exited|LWJGL Version|Backend library/i.test(line)) launched();
           const failure = /BackendCreationException: (.*)/.exec(line);
           if (failure) {
             backendErrors.push(failure[1].trim());
@@ -605,27 +632,15 @@ export class Client extends EventEmitter {
       });
       const run = this.run;
       void run.exited.then(() => clearTimeout(backendTimer));
-      void run.exited.then((code) => this.onGameExit(run, code));
-      // give HeadlessMC time to read the primary account before another launch may switch it
-      await Promise.race([launchedPromise, run.exited, sleep(60_000)]);
+      void run.exited.then((code) => {
+        sync();
+        this.onGameExit(run, code);
+      });
+      // the session HeadlessMC refreshed before launching goes back to the shared store
+      void launchedPromise.then(sync);
     };
 
-    if (this.account.type === 'microsoft') {
-      const wanted = this.account.name;
-      await withLock(accountsLock(this.paths), async () => {
-        const accounts = await listAccounts(this.paths);
-        if (!accounts.length) throw new CalciteError('not_logged_in', 'No Microsoft account is stored; run `calcite login` first');
-        const match = wanted ? accounts.find((a) => a.name.toLowerCase() === wanted.toLowerCase()) : accounts[0];
-        if (!match) throw new CalciteError('unknown_account', `No stored Microsoft account named "${wanted}" (have: ${accounts.map((a) => a.name).join(', ')})`);
-        if (!match.primary) {
-          const select = runHmc({ javaPath: java.path, hmcJar, paths: this.paths, props: {}, command: ['account', match.name] });
-          await select.exited;
-        }
-        await spawnGame();
-      });
-    } else {
-      await spawnGame();
-    }
+    await spawnGame();
   }
 
   private async onProbeConnected(): Promise<void> {

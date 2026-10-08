@@ -7,10 +7,11 @@ import { parseServer, CalciteError, Client } from '../dist/client.js';
 import { parseJavaSettings, pickJava } from '../dist/java.js';
 import { supportsQuickPlay, requiredJavaMajor, zipContains } from '../dist/mojang.js';
 import { parseOptions, serializeOptions, writeOptions, defaultOptions } from '../dist/options.js';
-import { bypassProxy, proxyFor } from '../dist/net.js';
+import { bypassProxy, javaProxyProps, proxyFor } from '../dist/net.js';
 import { resolvePaths, safeProbeDir } from '../dist/paths.js';
 import { acquireLock } from '../dist/lock.js';
-import { listAccounts, removeAccount } from '../dist/accounts.js';
+import { listAccounts, offlineUuid, prepareAccount, removeAccount, syncAccount } from '../dist/accounts.js';
+import { hmcListEntry, hmcQuote } from '../dist/hmc.js';
 
 test('parseServer', () => {
   assert.deepEqual(parseServer('mc.example.com'), { host: 'mc.example.com', port: 25565 });
@@ -115,25 +116,50 @@ test('lock excludes a second holder and recovers from a dead owner', async () =>
   }
 });
 
-test('accounts file parsing and removal', async () => {
+test('accounts store parsing, instance preparation and removal', async () => {
   const home = await mkdtemp(join(tmpdir(), 'calcite-acc-'));
   try {
     const paths = resolvePaths(home);
-    const file = join(paths.hmcHome, 'HeadlessMC', 'auth', '.accounts.json');
     const { mkdir } = await import('node:fs/promises');
-    await mkdir(join(paths.hmcHome, 'HeadlessMC', 'auth'), { recursive: true });
-    await writeFile(
-      file,
-      JSON.stringify({ accounts: [{ mcProfile: { name: 'Alice', id: 'a-1' } }, { session: { mcProfile: { name: 'Bob', id: 'b-2' } } }] }),
-    );
-    const list = await listAccounts(paths);
-    assert.deepEqual(list.map((a) => [a.name, a.primary]), [['Alice', true], ['Bob', false]]);
+    const auth = join(paths.hmcHome, '.auth');
+    await mkdir(join(auth, 'default'), { recursive: true });
+    await mkdir(join(auth, 'last'), { recursive: true });
+    const session = (name, id, token) => ({ minecraftProfile: { value: { id, name } }, token });
+    await writeFile(join(auth, 'default', '.accounts.json'), JSON.stringify({ accounts: { Alice: session('Alice', 'a-1', 1), Bob: session('Bob', 'b-2', 1) }, version: 0 }));
+    await writeFile(join(auth, 'last', '.accounts.json'), JSON.stringify({ accounts: { latest: [{ provider: 'default', name: 'Bob' }] }, version: 0 }));
+    assert.deepEqual((await listAccounts(paths)).map((a) => [a.name, a.uuid, a.primary]), [['Alice', 'a-1', false], ['Bob', 'b-2', true]]);
+
+    // a client location gets exactly the chosen session; a refreshed session is copied back
+    const loc = join(home, 'instance');
+    assert.equal(await prepareAccount(paths, loc, { type: 'microsoft' }), 'Bob');
+    assert.equal(await prepareAccount(paths, loc, { type: 'microsoft', name: 'alice' }), 'Alice');
+    const local = JSON.parse(await readFile(join(loc, '.auth', 'default', '.accounts.json'), 'utf8'));
+    assert.deepEqual(Object.keys(local.accounts), ['Alice']);
+    assert.deepEqual(JSON.parse(await readFile(join(loc, '.auth', 'last', '.accounts.json'), 'utf8')).accounts.latest, [{ provider: 'default', name: 'Alice' }]);
+    local.accounts.Alice.token = 2;
+    await writeFile(join(loc, '.auth', 'default', '.accounts.json'), JSON.stringify(local));
+    await syncAccount(paths, loc, 'Alice');
+    assert.equal(JSON.parse(await readFile(join(auth, 'default', '.accounts.json'), 'utf8')).accounts.Alice.token, 2);
+    await assert.rejects(prepareAccount(paths, loc, { type: 'microsoft', name: 'Carol' }), (e) => e.code === 'unknown_account');
+
+    assert.equal(await prepareAccount(paths, loc, { type: 'offline', username: 'Notch' }), 'Notch');
+    const offline = JSON.parse(await readFile(join(loc, '.auth', 'offline', '.accounts.json'), 'utf8'));
+    assert.equal(offline.accounts.Notch.uuid, 'b50ad385829d3141a2167e7d7539ba7f');
+    assert.equal(offlineUuid('Notch'), 'b50ad385829d3141a2167e7d7539ba7f');
+    await assert.rejects(readFile(join(loc, '.auth', 'default', '.accounts.json')));
+
     assert.equal(await removeAccount(paths, 'alice'), true);
     assert.deepEqual((await listAccounts(paths)).map((a) => a.name), ['Bob']);
     assert.equal(await removeAccount(paths, 'nobody'), false);
   } finally {
     await rm(home, { recursive: true, force: true });
   }
+});
+
+test('HeadlessMC argument quoting', () => {
+  assert.equal(hmcQuote('-javaagent:C:\\a b\\p.jar=x'), '"-javaagent:C:\\\\a b\\\\p.jar=x"');
+  assert.equal(hmcQuote('a"b'), '"a\\"b"');
+  assert.equal(hmcListEntry('C:\\Java,1\\java.exe'), 'C:\\\\Java\\,1\\\\java.exe');
 });
 
 test('Client validates names', () => {
@@ -154,5 +180,22 @@ test('zipContains reads the central directory', async () => {
     assert.equal(await zipContains(join(dir, 't.jar'), 'B.txt'), false);
   } finally {
     await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('proxy environment is converted to Java system properties', () => {
+  const saved = { ...process.env };
+  try {
+    for (const k of ['HTTPS_PROXY', 'HTTP_PROXY', 'NO_PROXY', 'https_proxy', 'http_proxy', 'no_proxy']) delete process.env[k];
+    assert.deepEqual(javaProxyProps(), {});
+    process.env.HTTPS_PROXY = 'http://user:pw@127.0.0.1:18080';
+    process.env.NO_PROXY = '.internal.example,10.0.0.0/8,host:8080';
+    assert.deepEqual(javaProxyProps(), {
+      'https.proxyHost': '127.0.0.1',
+      'https.proxyPort': '18080',
+      'http.nonProxyHosts': 'localhost|127.*|[::1]|*.internal.example|host',
+    });
+  } finally {
+    process.env = saved;
   }
 });

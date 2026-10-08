@@ -218,10 +218,15 @@ export async function ensureJava(paths: CalcitePaths, major: number, opts: Ensur
   return downloadJava(paths, major);
 }
 
-/** A runtime for HeadlessMC itself (any Java 8+); prefers the newest installed, downloads Java 21 otherwise. */
-export async function ensureLauncherJava(paths: CalcitePaths, javaPath?: string): Promise<JavaInstall> {
-  if (javaPath) return ensureJava(paths, 8, { javaPath });
-  const installs = (await findJavaInstalls(paths)).sort((a, b) => b.major - a.major);
-  if (installs.length) return installs[0];
-  return downloadJava(paths, 21);
+/** Java release HeadlessMC 3 itself runs on (the game may use another runtime). */
+export const LAUNCHER_JAVA_MAJOR = 25;
+
+/** A runtime for HeadlessMC itself (Java 25+); prefers an installed one, downloads Java 25 otherwise. */
+export async function ensureLauncherJava(paths: CalcitePaths, opts: { allowDownload?: boolean } = {}): Promise<JavaInstall> {
+  const picked = pickJava(await findJavaInstalls(paths), LAUNCHER_JAVA_MAJOR);
+  if (picked) return picked;
+  if (opts.allowDownload === false) {
+    throw new Error(`HeadlessMC needs Java ${LAUNCHER_JAVA_MAJOR} or newer, which is not installed (automatic download disabled)`);
+  }
+  return downloadJava(paths, LAUNCHER_JAVA_MAJOR);
 }

@@ -1,5 +1,5 @@
 import { spawn, type ChildProcess } from 'node:child_process';
-import { existsSync, readdirSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { delimiter, join } from 'node:path';
 import { logger } from './log.js';
 
@@ -65,8 +65,21 @@ function virtualDisplayEnv(): Record<string, string> {
 
 let shared: { proc: ChildProcess; display: string; refs: number } | null = null;
 
-function freeDisplayNumber(): number {
+/** Display numbers in use, including X servers that only listen on an abstract socket (no lock or socket file). */
+function displaysInUse(): Set<number> {
+  const used = new Set<number>();
+  try {
+    for (const m of readFileSync('/proc/net/unix', 'utf8').matchAll(/@?\/tmp\/\.X11-unix\/X(\d+)/g)) used.add(Number(m[1]));
+  } catch {
+    // no procfs
+  }
+  return used;
+}
+
+function freeDisplayNumber(skip: Set<number>): number {
+  const used = displaysInUse();
   for (let n = 99; n < 199; n++) {
+    if (skip.has(n) || used.has(n)) continue;
     if (!existsSync(`/tmp/.X11-unix/X${n}`) && !existsSync(`/tmp/.X${n}-lock`)) return n;
   }
   throw new Error('No free X display number between :99 and :198');
@@ -100,21 +113,34 @@ export async function acquireDisplay(opts: { width?: number; height?: number; fo
     if (!xvfb) {
       throw new Error('Rendering on a Linux machine without a display needs Xvfb and Mesa: apt-get install -y xvfb libgl1-mesa-dri libegl1 libegl-mesa0 (or run with --render off)');
     }
-    const n = freeDisplayNumber();
     const width = opts.width ?? 1280;
     const height = opts.height ?? 720;
-    const proc = spawn(xvfb, [`:${n}`, '-screen', '0', `${width}x${height}x24`, '-nolisten', 'tcp'], {
-      stdio: 'ignore',
-      detached: false,
-    });
-    proc.unref();
-    const ok = await waitFor(() => existsSync(`/tmp/.X11-unix/X${n}`) || proc.exitCode !== null, 10_000);
-    if (!ok || proc.exitCode !== null) throw new Error(`Xvfb :${n} failed to start`);
+    // a display may still be taken without leaving traces we can see; Xvfb then exits and the next number is tried
+    const tried = new Set<number>();
+    let n = 0;
+    let proc: ChildProcess | undefined;
+    for (let attempt = 0; attempt < 5 && !proc; attempt++) {
+      n = freeDisplayNumber(tried);
+      tried.add(n);
+      const candidate = spawn(xvfb, [`:${n}`, '-screen', '0', `${width}x${height}x24`, '-nolisten', 'tcp'], {
+        stdio: 'ignore',
+        detached: false,
+      });
+      candidate.unref();
+      await waitFor(() => existsSync(`/tmp/.X11-unix/X${n}`) || candidate.exitCode !== null, 10_000);
+      if (candidate.exitCode === null && existsSync(`/tmp/.X11-unix/X${n}`)) proc = candidate;
+      else {
+        candidate.kill();
+        log.debug(`Xvfb :${n} did not start, trying another display`);
+      }
+    }
+    if (!proc) throw new Error(`Xvfb failed to start (tried displays ${[...tried].map((d) => `:${d}`).join(', ')})`);
     log.info(`started Xvfb :${n} (${width}x${height})`);
-    shared = { proc, display: `:${n}`, refs: 0 };
+    const xvfbProc = proc;
+    shared = { proc: xvfbProc, display: `:${n}`, refs: 0 };
     const cleanup = () => {
       try {
-        proc.kill();
+        xvfbProc.kill();
       } catch {
         // already gone
       }

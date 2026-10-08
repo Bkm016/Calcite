@@ -42,7 +42,7 @@ Calcite 用于以编程方式驱动**真实的 Minecraft Java 版客户端**。�
 - **无显卡环境截图**：在 Linux 服务器上通过 Xvfb 与 Mesa 软件渲染完成截图。
 - **玩家操作**：转向、移动、寻路到坐标、攻击、使用物品与方块、挖掘、切换快捷栏、丢弃物品，以及打开箱子等容器并点击槽位。操作走原版客户端逻辑，与真实玩家输入等价。
 - **按需渲染**：默认不渲染画面，截图时临时渲染。单次截图约 0.5 秒，进服后首次截图需等待区块编译，约 2–4 秒。
-- **Java 自动管理**：按游戏版本自动选择 Java；本机缺少时从 Eclipse Adoptium 下载 Temurin，并校验 SHA-256。
+- **Java 自动管理**：按游戏版本自动选择 Java；本机缺少时从 Eclipse Adoptium 下载 Temurin，并校验 SHA-256。HeadlessMC 3 本身运行在 Java 25 上，同样按需下载。
 - **自动重连**：掉线或崩溃后按指数退避自动重连。
 - **多客户端**：一个进程可同时管理多个相互隔离的客户端实例。
 
@@ -51,7 +51,7 @@ Calcite 用于以编程方式驱动**真实的 Minecraft Java 版客户端**。�
 | 项目 | 要求 |
 | --- | --- |
 | Node.js | 20.18.1 或更高版本 |
-| Java | 无需预装；缺少时自动下载 |
+| Java | 无需预装；缺少时自动下载（游戏所需版本，以及 HeadlessMC 所需的 Java 25） |
 | 磁盘 | 每个游戏版本约 0.5–1 GB，资源文件在各版本间共享 |
 | Linux 截图 | `xvfb`、`libgl1-mesa-dri`；Minecraft 26.x 另需 `libegl1`、`libegl-mesa0` |
 
@@ -299,9 +299,11 @@ await bot.closeContainer();
 | Linux | 全部功能（在 Xvfb 中渲染） | 全部功能 |
 | Windows / macOS | 无渲染运行，不支持截图，其余功能正常 | 全部功能 |
 
-HeadlessMC 仅允许离线账号在 Linux 虚拟显示器中渲染。这是上游策略，Calcite 遵循该策略。如需在 Windows 或 macOS 上截图，请使用正版账号。
+HeadlessMC 仅在检测到 Xvfb 时允许离线账号渲染，否则强制以无渲染方式运行。这是上游策略，Calcite 遵循该策略。如需在 Windows 或 macOS 上截图，请使用正版账号。
 
 离线账号只能进入 `online-mode=false` 的服务器。
+
+从 0.1.x 升级：Calcite 现使用 HeadlessMC 3，其凭据格式与 HeadlessMC 2 不兼容，已保存的微软账号需要重新执行一次 `calcite login`。
 
 ## 渲染模式
 
@@ -328,14 +330,15 @@ HeadlessMC 仅允许离线账号在 Linux 虚拟显示器中渲染。这是上�
 | --- | --- |
 | `minecraft/` | 各版本共享的游戏文件、库与资源 |
 | `instances/<name>/` | 各实例独立的游戏目录（`options.txt`、日志、截图） |
-| `hmc-home/HeadlessMC/auth/` | 已保存的微软登录凭据（权限 600，请妥善保管） |
+| `hmc-home/.auth/default/` | 已保存的微软登录凭据（权限 600，请妥善保管） |
+| `instances/<name>/.headlessmc/` | 该实例的 HeadlessMC 配置、账号副本与缓存 |
 | `java/` | 自动下载的 Java 运行时 |
 
 | 环境变量 | 说明 |
 | --- | --- |
 | `CALCITE_HOME` | 数据目录 |
 | `CALCITE_LOG_LEVEL` | 日志级别：`debug`、`info`、`warn`、`error`、`silent` |
-| `HTTPS_PROXY` / `HTTP_PROXY` / `NO_PROXY` | 下载代理 |
+| `HTTPS_PROXY` / `HTTP_PROXY` / `NO_PROXY` | HTTP 代理。Calcite 自身的下载使用该代理，并将其转换为 Java 系统属性传给 HeadlessMC 与游戏进程（Java 不支持代理认证；游戏与服务器之间的连接不经过代理） |
 | `CALCITE_JAVA_<主版本>` | 指定某个 Java 主版本的路径，例如 `CALCITE_JAVA_8` |
 | `CALCITE_HMC_JAR` / `CALCITE_HMC_URL` | 使用自定义的 HeadlessMC |
 | `CALCITE_PROBE_DIR` | 探针目录，路径中不能包含空格 |
@@ -360,7 +363,7 @@ HeadlessMC 仅允许离线账号在 Linux 虚拟显示器中渲染。这是上�
 ## 工作原理
 
 1. Calcite 解析 Mojang 版本清单，下载客户端、库与资源文件，并逐一校验哈希。
-2. 使用 [HeadlessMC](https://github.com/headlesshq/headlessmc) 启动游戏。每个实例拥有独立的游戏目录和启动参数。
+2. 使用 [HeadlessMC](https://github.com/headlesshq/headlessmc) 3 启动游戏。每个实例拥有独立的游戏目录、HeadlessMC 配置和启动参数，并发启动互不干扰。
 3. 向游戏注入一个轻量 Java Agent（探针）。探针借助 Mojang 官方映射表定位游戏内部类，并通过本地 TCP 连接与 Calcite 交换 JSON 消息。
 4. 在 Linux 无显示环境中，Calcite 启动共享的 Xvfb，并配置 Mesa 软件渲染。Minecraft 26.x 的渲染器改用 EGL。
 

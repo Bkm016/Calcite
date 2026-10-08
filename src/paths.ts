@@ -5,9 +5,9 @@ import { join } from 'node:path';
 export interface CalcitePaths {
   /** Root of all Calcite data. */
   home: string;
-  /** Working directory of HeadlessMC: shared config and stored accounts (HeadlessMC/auth/.accounts.json). */
+  /** HeadlessMC files location of `calcite login`: Microsoft sessions (.auth/default/.accounts.json). */
   hmcHome: string;
-  /** HeadlessMC launcher jars. */
+  /** HeadlessMC jars. */
   hmcJars: string;
   /** Shared Minecraft directory: versions, libraries, assets. */
   minecraft: string;

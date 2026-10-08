@@ -106,7 +106,7 @@ async function action(client: Client, line: string): Promise<boolean> {
 const program = new Command()
   .name('calcite')
   .description('Run real Minecraft clients headlessly for testing and AI agents')
-  .version(VERSION)
+  .version(VERSION, '--version') // -V is the launch command's --mc-version
   .option('-v, --verbose', 'debug logging')
   .hook('preAction', (cmd) => {
     if (cmd.opts().verbose) setLogLevel('debug');

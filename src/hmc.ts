@@ -1,43 +1,58 @@
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
+import { mkdirSync } from 'node:fs';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
-import { download } from './net.js';
+import { pathToFileURL } from 'node:url';
+import { download, javaProxyProps } from './net.js';
 import type { CalcitePaths } from './paths.js';
 
 /** Pinned HeadlessMC release (MIT, https://github.com/headlesshq/headlessmc). */
-export const HMC_VERSION = '2.10.0';
-export const HMC_URL = `https://github.com/headlesshq/headlessmc/releases/download/${HMC_VERSION}/headlessmc-launcher-wrapper-${HMC_VERSION}.jar`;
-export const HMC_SHA256 = 'bf80d84516eeeb9a51fa35894c4466b146d55d0146cd6d2adc49fdd231654536';
+export const HMC_VERSION = '3.0.0-RC3';
+export const HMC_URL = `https://github.com/headlesshq/headlessmc/releases/download/${HMC_VERSION}/headlessmc.jar`;
+export const HMC_SHA256 = 'dcc061a336ecf7aa638794bd47840fa9970b31d562e630e84c3d587c906153a8';
 
-/** Path of the HeadlessMC launcher jar (CALCITE_HMC_JAR overrides the pinned download). */
+/** Path of the HeadlessMC jar (CALCITE_HMC_JAR overrides the pinned download). */
 export async function ensureHmc(paths: CalcitePaths): Promise<string> {
   if (process.env.CALCITE_HMC_JAR) return process.env.CALCITE_HMC_JAR;
-  const file = join(paths.hmcJars, `headlessmc-launcher-wrapper-${HMC_VERSION}.jar`);
+  const file = join(paths.hmcJars, `headlessmc-${HMC_VERSION}.jar`);
   await download(process.env.CALCITE_HMC_URL || HMC_URL, file, { sha256: HMC_SHA256 });
   return file;
 }
 
+/** Escapes one entry of a comma separated HeadlessMC list setting. */
+export function hmcListEntry(value: string): string {
+  return value.replace(/\\/g, '\\\\').replace(/,/g, '\\,');
+}
+
+/** Quotes one argument for HeadlessMC's `--jvm`/`--game` options, which are split like a shell command line. */
+export function hmcQuote(arg: string): string {
+  return `"${arg.replace(/[\\"]/g, (c) => `\\${c}`)}"`;
+}
+
 /**
- * Base config of the shared HeadlessMC home. Per-client settings are passed as -D system properties, which
- * HeadlessMC reads before its config file, so concurrent clients never rewrite a shared file.
+ * Writes the HeadlessMC profile used when launching `versionId` from `location`. HeadlessMC only runs a version
+ * with the exact Java major the version asks for; the profile pins the runtime Calcite chose instead.
  */
-export async function ensureHmcHome(paths: CalcitePaths): Promise<void> {
-  const dir = join(paths.hmcHome, 'HeadlessMC');
-  await mkdir(dir, { recursive: true });
-  await writeFile(
-    join(dir, 'config.properties'),
-    [
-      '# Managed by Calcite. Per-client values are passed as -Dhmc.* system properties.',
-      `hmc.mcdir=${paths.minecraft.replace(/\\/g, '\\\\')}`,
-      'hmc.store.accounts=true',
-      'hmc.account.refresh.on.game.launch=true',
-      'hmc.exit.on.failed.command=true',
-      'hmc.always.download.assets.index=true',
-      'hmc.http.user.agent.enabled=true',
-      '',
-    ].join('\n'),
-  );
+export async function writeHmcProfile(location: string, versionId: string, gameDir: string, javaMajor: number): Promise<void> {
+  const version = { side: null, platform: 'vanilla', version: versionId, build: null };
+  const profile = {
+    name: 'calcite',
+    version,
+    currentVersion: version,
+    path: pathToFileURL(gameDir).href,
+    options: { resolution: null, quickPlayPath: null, join: null, demo: false },
+    patchers: [],
+    systemProperties: {},
+    vmArgs: [],
+    gameArgs: [],
+    javaVersion: javaMajor,
+    eulaStatus: 'UNKNOWN',
+    hasDefaultClientJvmArgs: true,
+    hmcVersion: 0,
+  };
+  await mkdir(join(location, 'profiles'), { recursive: true });
+  await writeFile(join(location, 'profiles', 'calcite.json'), JSON.stringify(profile, null, 2));
 }
 
 export interface HmcRun {
@@ -49,10 +64,11 @@ export interface HmcRun {
 export interface HmcRunOptions {
   javaPath: string;
   hmcJar: string;
-  paths: CalcitePaths;
+  /** HeadlessMC files location (config, accounts, caches) of this run. */
+  location: string;
   /** hmc.* (and other) system properties for this run. */
-  props: Record<string, string>;
-  /** HeadlessMC command line, e.g. ["launch", "1.21.11", "-lwjgl"]. */
+  props?: Record<string, string>;
+  /** HeadlessMC command line, e.g. ["launch", "1.21.11", "--headless"]. */
   command: string[];
   env?: NodeJS.ProcessEnv;
   onLine?: (line: string) => void;
@@ -89,17 +105,22 @@ function guardExit(): void {
   }
 }
 
-/** Runs one HeadlessMC command non-interactively (`--command ...`) in the shared HeadlessMC home. */
+/**
+ * Runs one HeadlessMC command non-interactively; HeadlessMC exits once the command (and a launched game) finished.
+ * Settings are passed as -D system properties, which take precedence over any config file.
+ */
 export function runHmc(opts: HmcRunOptions): HmcRun {
-  const args = [
-    ...Object.entries(opts.props).map(([k, v]) => `-D${k}=${v}`),
-    '-jar',
-    opts.hmcJar,
-    '--command',
-    ...opts.command,
-  ];
+  const props: Record<string, string> = {
+    'hmc.files.location': opts.location,
+    'hmc.jline.enabled': 'false',
+    'hmc.log.console-level': 'INFO',
+    ...javaProxyProps(),
+    ...opts.props,
+  };
+  const args = [...Object.entries(props).map(([k, v]) => `-D${k}=${v}`), '-jar', opts.hmcJar, ...opts.command];
+  mkdirSync(opts.location, { recursive: true });
   const child = spawn(opts.javaPath, args, {
-    cwd: opts.paths.hmcHome,
+    cwd: opts.location,
     env: opts.env ?? process.env,
     stdio: ['pipe', 'pipe', 'pipe'],
     // own process group on POSIX so the whole tree (launcher + game) can be stopped together
