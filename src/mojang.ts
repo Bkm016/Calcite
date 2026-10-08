@@ -1,4 +1,4 @@
-import { mkdir, open, readFile, stat, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { download, httpJson } from './net.js';
 import type { CalcitePaths } from './paths.js';
@@ -102,45 +102,3 @@ export function requiredJavaMajor(json: VersionJson): number {
 export function supportsQuickPlay(json: VersionJson): boolean {
   return JSON.stringify(json.arguments?.game ?? []).includes('quickPlayMultiplayer');
 }
-
-export type NameMode =
-  | { kind: 'mappings'; file: string }
-  | { kind: 'official' }
-  | { kind: 'unsupported'; reason: string };
-
-/**
- * How the probe can find game classes: Mojang mappings (obfuscated 1.14.4+), official names (unobfuscated
- * releases such as 26.1+), or unsupported (obfuscated versions without published mappings, before 1.14.4).
- */
-export async function resolveNames(paths: CalcitePaths, json: VersionJson, clientJar: string): Promise<NameMode> {
-  if (json.downloads.client_mappings) {
-    const file = join(paths.mappings, `${json.id}-client.txt`);
-    await download(json.downloads.client_mappings.url, file, { sha1: json.downloads.client_mappings.sha1 });
-    return { kind: 'mappings', file };
-  }
-  if (await zipContains(clientJar, 'net/minecraft/client/Minecraft.class')) {
-    return { kind: 'official' };
-  }
-  return { kind: 'unsupported', reason: `Minecraft ${json.id} is obfuscated and Mojang published no mappings for it (needs 1.14.4+)` };
-}
-
-/** Checks the zip central directory for an entry name (no full extraction). */
-export async function zipContains(file: string, entry: string): Promise<boolean> {
-  const handle = await open(file, 'r');
-  try {
-    const { size } = await handle.stat();
-    const tailSize = Math.min(size, 65_557);
-    const tail = Buffer.alloc(tailSize);
-    await handle.read(tail, 0, tailSize, size - tailSize);
-    const eocd = tail.lastIndexOf(Buffer.from([0x50, 0x4b, 0x05, 0x06]));
-    if (eocd < 0) throw new Error(`Not a zip file: ${file}`);
-    const cdSize = tail.readUInt32LE(eocd + 12);
-    const cdOffset = tail.readUInt32LE(eocd + 16);
-    const cd = Buffer.alloc(cdSize);
-    await handle.read(cd, 0, cdSize, cdOffset);
-    return cd.includes(Buffer.from(entry, 'utf8'));
-  } finally {
-    await handle.close();
-  }
-}
-

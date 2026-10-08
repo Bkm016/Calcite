@@ -28,6 +28,7 @@ Calcite 用于以编程方式驱动**真实的 Minecraft Java 版客户端**。�
 - [Node.js API](#nodejs-api)
 - [平台与账号](#平台与账号)
 - [渲染模式](#渲染模式)
+- [模组](#模组)
 - [版本兼容性](#版本兼容性)
 - [数据目录与环境变量](#数据目录与环境变量)
 - [故障排查](#故障排查)
@@ -40,6 +41,7 @@ Calcite 用于以编程方式驱动**真实的 Minecraft Java 版客户端**。�
 - **跨平台**：Linux、Windows、macOS。
 - **账号**：支持离线账号，也支持微软正版账号。正版账号使用设备码登录，凭据持久保存并自动刷新。
 - **无显卡环境截图**：在 Linux 服务器上通过 Xvfb 与 Mesa 软件渲染完成截图。
+- **模组加载器**：一行参数安装 Fabric、Forge 或 NeoForge，并从本地文件、URL 或 Modrinth 加载模组（自动补全前置依赖），探针功能在模组环境中同样可用。
 - **玩家操作**：转向、移动、寻路到坐标、攻击、使用物品与方块、挖掘、切换快捷栏、丢弃物品，以及打开箱子等容器并点击槽位。操作走原版客户端逻辑，与真实玩家输入等价。
 - **按需渲染**：默认不渲染画面，截图时临时渲染。单次截图约 0.5 秒，进服后首次截图需等待区块编译，约 2–4 秒。
 - **Java 自动管理**：按游戏版本自动选择 Java（render `off` 时原本需要 Java 8 的版本改用 Java 17，HeadlessMC 3 的 LWJGL 替身不支持 Java 8）；本机缺少时从 Eclipse Adoptium 下载 Temurin，并校验 SHA-256。HeadlessMC 3 本身运行在 Java 25 上，同样按需下载。
@@ -111,7 +113,7 @@ calcite launch play.example.com -V 1.21.11 -n Bot1
 | 命令 | 说明 |
 | --- | --- |
 | `calcite launch [server]` | 启动客户端并在终端中交互 |
-| `calcite install [version]` | 预下载指定版本（客户端、库、资源、Java），不启动游戏 |
+| `calcite install [version]` | 预下载指定版本（客户端、库、资源、Java），不启动游戏；`-l, --loader` 同时安装模组加载器 |
 | `calcite versions` | 列出可用版本（`-t release\|snapshot\|old_beta\|old_alpha\|all`，`-l <数量>`） |
 | `calcite login` | 微软账号登录（设备码） |
 | `calcite accounts` | 列出已保存的微软账号 |
@@ -128,6 +130,8 @@ calcite launch play.example.com -V 1.21.11 -n Bot1
 | `-u, --username <name>` | 实例名 | 离线用户名 |
 | `-m, --microsoft [account]` | — | 使用已保存的微软账号（省略名称时使用主账号） |
 | `-r, --render <mode>` | `on-demand` | 渲染模式：`on-demand`、`always`、`off` |
+| `-l, --loader <loader>` | — | 模组加载器：`fabric`、`forge`、`neoforge`，可加 `@<版本>`，见[模组](#模组) |
+| `--mod <spec>` | — | 加载模组，可重复；需同时指定加载器 |
 | `--java <path>` | 自动选择 | 指定游戏使用的 Java |
 | `--no-java-download` | — | 禁止自动下载 Java |
 | `--memory <size>` | `2G` | 最大堆内存 |
@@ -167,7 +171,7 @@ claude mcp add calcite -- npx -y @bkm016/calcite mcp
 
 | 工具 | 说明 |
 | --- | --- |
-| `launch_client` | 启动客户端，可指定服务器、版本、离线用户名或微软账号、渲染模式 |
+| `launch_client` | 启动客户端，可指定服务器、版本、离线用户名或微软账号、渲染模式、模组加载器与模组 |
 | `stop_client` | 停止客户端 |
 | `list_clients` | 列出当前管理的客户端 |
 | `get_state` | 获取生命周期阶段与游戏状态（界面、坐标、生命值、维度、帧率、断开原因） |
@@ -195,7 +199,7 @@ claude mcp add calcite -- npx -y @bkm016/calcite mcp
 | `click_slot` | 点击容器槽位，支持拾取、快速移动、数字键交换、丢弃等模式 |
 | `close_container` | 关闭当前容器 |
 | `drop_item` | 丢弃手中物品 |
-| `install_version` | 预下载指定版本 |
+| `install_version` | 预下载指定版本，可同时安装模组加载器 |
 | `list_versions` | 列出可用版本 |
 | `account_login_start` | 开始微软账号登录，返回验证链接 |
 | `account_login_status` | 查询登录进度 |
@@ -238,6 +242,8 @@ await bot.stop();
 | `server` | `host[:port]`；省略时停留在标题界面 |
 | `account` | `{ type: 'offline', username }` 或 `{ type: 'microsoft', name? }` |
 | `render` | `on-demand`（默认）、`always`、`off` |
+| `loader` | 模组加载器：`fabric`、`forge`、`neoforge`，可加 `@<版本>` |
+| `mods` | 模组列表：本地 jar 或目录、http(s) URL、`modrinth:<项目>[@<版本>]` |
 | `memory` | 最大堆内存，默认 `2G` |
 | `javaPath` / `allowJavaDownload` | 指定 Java 路径 / 是否允许自动下载 |
 | `jvmArgs` / `gameArgs` | 额外的 JVM 参数 / 游戏参数 |
@@ -313,6 +319,37 @@ HeadlessMC 仅在检测到 Xvfb 时允许离线账号渲染，否则强制以无
 | `always` | 持续渲染，适合在本地桌面观察 |
 | `off` | 以无渲染器方式运行（替换 LWJGL），资源占用最低，不支持截图 |
 
+## 模组
+
+```bash
+# Fabric + Fabric API（从 Modrinth 下载，自动补全前置）
+calcite launch localhost -V 1.21.11 -l fabric --mod modrinth:fabric-api --mod ./mods/my-mod.jar
+
+# 指定加载器版本
+calcite launch localhost -V 1.20.1 -l forge@47.4.26
+calcite install 1.21.11 -l neoforge
+```
+
+```js
+new Client({ version: '1.21.11', loader: 'fabric', mods: ['modrinth:fabric-api', './my-mod.jar'] });
+```
+
+- 加载器由 HeadlessMC 安装到共享的 `minecraft/versions/`，省略版本时使用最新版本（已安装过则复用本地最新版）。
+- 模组来源：本地 jar、包含 jar 的目录、http(s) URL，或 `modrinth:<项目>[@<版本号>]`。Modrinth 模组按游戏版本与加载器挑选最新正式版，并自动下载必需的前置模组；下载文件按哈希校验并缓存在 `mods/`。
+- 模组复制到实例的 `mods/` 目录。Calcite 只管理自己放入的文件（记录在 `mods/.calcite-mods.json`），手动放入的模组不受影响。
+- 模组加载失败时，客户端会停在错误界面；Calcite 检测到后立即结束进程并返回 `mod_loading_failed`，错误信息附带相关日志。
+
+| 加载器 | 支持的版本 | 探针 |
+| --- | --- | --- |
+| Fabric | Fabric 支持的所有版本 | 全部功能（自动将 Mojang 映射转换为 intermediary 名称） |
+| NeoForge | 1.20.2 及以上 | 全部功能 |
+| Forge | 1.17 及以上 | 全部功能（1.20.4 及以前自动转换为 SRG 名称） |
+| Forge | 1.16.5 及以前 | 可以启动，探针功能不可用 |
+
+Forge 与 NeoForge 的安装器要求与游戏版本完全一致的 Java 主版本（例如 1.20.1 需要 Java 17），缺少时自动下载。Forge 与 NeoForge 不支持在 render `off` 下运行原本需要 Java 8 的版本。
+
+已验证：Fabric 1.21.11 / 26.3（含 Fabric API）、NeoForge 1.20.4 / 1.21.11、Forge 1.20.1 / 1.21.1。
+
 ## 版本兼容性
 
 | 版本范围 | 支持情况 |
@@ -333,6 +370,8 @@ HeadlessMC 仅在检测到 Xvfb 时允许离线账号渲染，否则强制以无
 | `hmc-home/.auth/default/` | 已保存的微软登录凭据（权限 600，请妥善保管） |
 | `instances/<name>/.headlessmc/` | 该实例的 HeadlessMC 配置、账号副本与缓存 |
 | `java/` | 自动下载的 Java 运行时 |
+| `mods/` | 从 URL 与 Modrinth 下载的模组缓存 |
+| `mappings/` | 映射表及为模组加载器转换后的名称表 |
 
 | 环境变量 | 说明 |
 | --- | --- |
@@ -357,6 +396,10 @@ HeadlessMC 仅在检测到 Xvfb 时允许离线账号渲染，否则强制以无
 | `not_logged_in` / `unknown_account` | 未登录微软账号或账号名不存在。请先执行 `calcite login` |
 | `instance_busy` | 同名实例已在其他进程中运行 |
 | `unsupported_version` | 版本不存在或不受支持 |
+| `bad_loader` / `unsupported_loader` | 加载器名称或版本格式错误 / 该版本组合无法运行 |
+| `install_failed` | HeadlessMC 未能安装加载器（该游戏版本可能没有对应构建） |
+| `bad_mod` / `mod_not_found` | 模组参数错误 / 找不到模组文件或 Modrinth 上没有适配的版本 |
+| `mod_loading_failed` | 模组加载失败（缺少前置、版本不兼容等），错误信息附带日志 |
 
 排查环境问题时，建议先运行 `calcite doctor`。
 
@@ -364,7 +407,7 @@ HeadlessMC 仅在检测到 Xvfb 时允许离线账号渲染，否则强制以无
 
 1. Calcite 解析 Mojang 版本清单，下载客户端、库与资源文件，并逐一校验哈希。
 2. 使用 [HeadlessMC](https://github.com/headlesshq/headlessmc) 3 启动游戏。每个实例拥有独立的游戏目录、HeadlessMC 配置和启动参数，并发启动互不干扰。
-3. 向游戏注入一个轻量 Java Agent（探针）。探针借助 Mojang 官方映射表定位游戏内部类，并通过本地 TCP 连接与 Calcite 交换 JSON 消息。
+3. 向游戏注入一个轻量 Java Agent（探针）。探针借助 Mojang 官方映射表（模组环境下转换为 intermediary 或 SRG 名称）定位游戏内部类，并通过本地 TCP 连接与 Calcite 交换 JSON 消息。
 4. 在 Linux 无显示环境中，Calcite 启动共享的 Xvfb，并配置 Mesa 软件渲染。Minecraft 26.x 的渲染器改用 EGL。
 
 ## 许可

@@ -103,6 +103,10 @@ async function action(client: Client, line: string): Promise<boolean> {
   }
 }
 
+function collect(value: string, previous: string[]): string[] {
+  return [...previous, value];
+}
+
 const program = new Command()
   .name('calcite')
   .description('Run real Minecraft clients headlessly for testing and AI agents')
@@ -118,6 +122,8 @@ program
   .argument('[server]', 'host[:port] to join')
   .option('-n, --name <name>', 'client / instance name', 'calcite')
   .option('-V, --mc-version <version>', 'Minecraft version, "release" or "snapshot"', 'release')
+  .option('-l, --loader <loader>', 'mod loader: fabric, forge or neoforge, optionally @version (e.g. fabric@0.19.5)')
+  .option('--mod <spec>', 'mod jar, folder, URL or modrinth:<project>[@version] (repeatable; needs --loader)', collect, [])
   .option('-u, --username <name>', 'offline username (default: the client name)')
   .option('-m, --microsoft [account]', 'use a stored Microsoft account (primary one, or by name)')
   .addOption(new Option('-r, --render <mode>', 'renderer mode').choices(['on-demand', 'always', 'off']).default('on-demand'))
@@ -132,6 +138,8 @@ program
     const client = new Client({
       name: o.name,
       version: o.mcVersion,
+      loader: o.loader,
+      mods: o.mod,
       server,
       account,
       render: o.render as RenderMode,
@@ -198,13 +206,14 @@ program
 
 program
   .command('install')
-  .description('Download a version (client, libraries, assets, Java) without launching')
+  .description('Download a version (client, libraries, assets, Java, mod loader) without launching')
   .argument('[version]', 'version id, "release" or "snapshot"', 'release')
+  .option('-l, --loader <loader>', 'also install a mod loader: fabric, forge or neoforge, optionally @version')
   .option('--java <path>', 'java executable to use')
   .action(async (version: string, o) => {
     try {
-      const r = await installVersion(version, { javaPath: o.java, onLine: (l) => process.stderr.write(`  ${l}\n`) });
-      out(`installed ${r.id} (java ${r.java}; probe ${r.probe})`);
+      const r = await installVersion(version, { loader: o.loader, javaPath: o.java, onLine: (l) => process.stderr.write(`  ${l}\n`) });
+      out(`installed ${r.id}${r.loader ? ` with ${r.loader}` : ''} (java ${r.java}; probe ${r.probe})`);
     } catch (err) {
       fail(err);
     }

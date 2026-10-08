@@ -202,6 +202,8 @@ export interface EnsureJavaOptions {
   javaPath?: string;
   /** Download a runtime when none is installed (default true). */
   allowDownload?: boolean;
+  /** Only accept exactly {@code major} (Forge and NeoForge refuse newer runtimes). */
+  exact?: boolean;
 }
 
 export async function ensureJava(paths: CalcitePaths, major: number, opts: EnsureJavaOptions = {}): Promise<JavaInstall> {
@@ -210,10 +212,11 @@ export async function ensureJava(paths: CalcitePaths, major: number, opts: Ensur
     if (!j) throw new Error(`Not a working java executable: ${opts.javaPath}`);
     return j;
   }
-  const picked = pickJava(await findJavaInstalls(paths), major);
+  const installs = await findJavaInstalls(paths);
+  const picked = opts.exact ? installs.find((j) => j.major === major) : pickJava(installs, major);
   if (picked) return picked;
   if (opts.allowDownload === false) {
-    throw new Error(`Java ${major} is required but not installed (automatic download disabled)`);
+    throw new Error(`Java ${major}${opts.exact ? '' : ' or newer'} is required but not installed (automatic download disabled)`);
   }
   return downloadJava(paths, major);
 }

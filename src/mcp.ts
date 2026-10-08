@@ -63,6 +63,7 @@ export function createMcpServer(opts: McpOptions = {}): { server: McpServer; man
         'Acting: look / walk_to / move to get around, attack and use (right click: chests, doors, placing blocks, eating) on entity ids from get_entities or block coordinates, dig to mine, get_inventory / select_slot for items, get_container / click_slot / close_container for chests and other containers. Check results with get_state, get_target, get_block or a screenshot.',
         'Offline accounts need no login. For premium servers call account_login_start, show the URL to the user, then poll account_login_status.',
         'Screenshots need render "on-demand" (default) or "always"; with "on-demand" frames are only rendered while a screenshot is taken, keeping CPU usage low.',
+        'Mods: launch_client with loader "fabric", "forge" or "neoforge" (installed on first use) and mods such as "modrinth:fabric-api", URLs or local jars.',
       ].join('\n'),
     },
   );
@@ -76,6 +77,14 @@ export function createMcpServer(opts: McpOptions = {}): { server: McpServer; man
       inputSchema: {
         name: z.string().regex(/^[A-Za-z0-9_.-]{1,32}$/).describe('Unique client name; also the instance directory'),
         version: z.string().default('release').describe('Minecraft version id, "release" (latest release) or "snapshot"'),
+        loader: z
+          .string()
+          .optional()
+          .describe('Mod loader: "fabric", "forge" or "neoforge", optionally with a version ("fabric@0.19.5"); installed on first use'),
+        mods: z
+          .array(z.string())
+          .optional()
+          .describe('Mods (needs loader): "modrinth:<project>[@version]" (with required dependencies), http(s) URLs of jars, or local jar/folder paths'),
         server: z.string().optional().describe('host[:port] to join'),
         username: z.string().optional().describe('Offline username (3-16 chars). Ignored when microsoft is set'),
         microsoft: z.union([z.boolean(), z.string()]).optional().describe('Use a stored Microsoft account: true for the primary one or the profile name'),
@@ -93,6 +102,8 @@ export function createMcpServer(opts: McpOptions = {}): { server: McpServer; man
         ...opts.defaults,
         name: a.name,
         version: a.version,
+        loader: a.loader,
+        mods: a.mods,
         server: a.server,
         account,
         render: a.render ?? opts.defaults?.render,
@@ -456,10 +467,13 @@ export function createMcpServer(opts: McpOptions = {}): { server: McpServer; man
     'install_version',
     {
       title: 'Pre-download a version',
-      description: 'Downloads a version (client, libraries, assets, Java) without launching, so the next launch is fast.',
-      inputSchema: { version: z.string().default('release') },
+      description: 'Downloads a version (client, libraries, assets, Java, optionally a mod loader) without launching, so the next launch is fast.',
+      inputSchema: {
+        version: z.string().default('release'),
+        loader: z.string().optional().describe('Also install a mod loader: "fabric", "forge" or "neoforge", optionally "@<version>"'),
+      },
     },
-    safe(async ({ version }) => text(await installVersion(version, { paths }))),
+    safe(async ({ version, loader }) => text(await installVersion(version, { paths, loader }))),
   );
 
   server.registerTool(

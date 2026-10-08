@@ -13,8 +13,10 @@ export interface CalcitePaths {
   minecraft: string;
   /** Java runtimes downloaded by Calcite. */
   java: string;
-  /** Mojang client mappings. */
+  /** Mojang client mappings and the name tables composed from them. */
   mappings: string;
+  /** Downloaded mods (by content hash). */
+  mods: string;
   /** Cached Mojang metadata. */
   meta: string;
   /** Per-client game directories. */
@@ -63,6 +65,7 @@ export function resolvePaths(home = process.env.CALCITE_HOME || join(homedir(), 
     minecraft: join(home, 'minecraft'),
     java: join(home, 'java'),
     mappings: join(home, 'mappings'),
+    mods: join(home, 'mods'),
     meta: join(home, 'meta'),
     instances: join(home, 'instances'),
     probe,

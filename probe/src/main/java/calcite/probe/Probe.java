@@ -8,8 +8,10 @@ import java.lang.instrument.Instrumentation;
 import java.net.InetSocketAddress;
 import java.net.Socket;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -20,9 +22,11 @@ import java.util.concurrent.TimeUnit;
 /**
  * Java agent loaded into the Minecraft client by Calcite.
  *
- * <p>Agent arguments (comma separated {@code key=value}): {@code port}, {@code token}, {@code mappings} (path to the
- * Mojang client mappings, empty for unobfuscated versions), {@code headless} (true when HeadlessMC replaced the
- * renderer), {@code render} ({@code on}|{@code off}: initial world rendering), {@code exitOnDisconnect}.</p>
+ * <p>Agent arguments (comma separated {@code key=value}): {@code port}, {@code token}, {@code mappings.1},
+ * {@code mappings.2}, ... (name tables to try in order: a mapping file in Mojang's format, or {@code official} for a
+ * game running with official names; {@code mappings} is read when there are none), {@code headless} (true when
+ * HeadlessMC replaced the renderer), {@code render} ({@code on}|{@code off}: initial world rendering),
+ * {@code exitOnDisconnect}.</p>
  *
  * <p>Protocol: one JSON object per line over TCP to 127.0.0.1:port. The probe sends a {@code hello} with the token,
  * then answers requests {@code {"id":1,"op":"state","args":{}}} with {@code {"id":1,"ok":true,"result":...}} or
@@ -45,6 +49,9 @@ public final class Probe {
     private volatile Render render;
     private volatile String initError;
     private Mappings mappings;
+    private String names;
+    /** Loader of the game classes; probe threads use it as context loader (Forge's transformers resolve through it). */
+    private volatile ClassLoader gameLoader;
     private final Object writeLock = new Object();
 
     private Probe(Map<String, String> args, Instrumentation instrumentation) {
@@ -102,6 +109,20 @@ public final class Probe {
         return map;
     }
 
+    /** The name tables to try: {@code mappings.1}, {@code mappings.2}, ...; else {@code mappings} (empty = official). */
+    private List<String> nameCandidates() {
+        List<String> list = new ArrayList<String>();
+        for (int i = 1; args.containsKey("mappings." + i); i++) {
+            String value = args.get("mappings." + i);
+            list.add(value.isEmpty() ? "official" : value);
+        }
+        if (list.isEmpty()) {
+            String legacy = args.get("mappings");
+            list.add(legacy == null || legacy.isEmpty() ? "official" : legacy);
+        }
+        return list;
+    }
+
     private void run() {
         workers.submit(new Runnable() {
             @Override
@@ -135,27 +156,42 @@ public final class Probe {
     /** Loads mappings, waits for the Minecraft class and singleton, then applies the initial render mode. */
     private void initGame() {
         try {
-            String mappingsPath = args.get("mappings");
-            mappings = mappingsPath == null || mappingsPath.isEmpty()
-                    ? Mappings.identity()
-                    : Mappings.load(new File(mappingsPath).toPath());
-            String runtimeName = mappings.runtimeClass(MINECRAFT);
-            if (runtimeName == null) {
-                throw new IllegalStateException("Mappings do not contain " + MINECRAFT);
-            }
-            Class<?> minecraft = null;
-            while (minecraft == null) {
+            List<String> candidates = nameCandidates();
+            Map<String, Mappings> tables = new HashMap<String, Mappings>();
+            Ref ref = null;
+            while (ref == null) {
+                Map<String, Class<?>> loaded = new HashMap<String, Class<?>>();
                 for (Class<?> k : instrumentation.getAllLoadedClasses()) {
-                    if (k.getName().equals(runtimeName)) {
-                        minecraft = k;
-                        break;
-                    }
+                    loaded.put(k.getName(), k);
                 }
-                if (minecraft == null) {
+                for (String candidate : candidates) {
+                    Mappings m = tables.get(candidate);
+                    if (m == null) {
+                        m = "official".equals(candidate) ? Mappings.identity() : Mappings.load(new File(candidate).toPath());
+                        tables.put(candidate, m);
+                    }
+                    String runtimeName = m.runtimeClass(MINECRAFT);
+                    Class<?> minecraft = runtimeName == null ? null : loaded.get(runtimeName);
+                    if (minecraft == null) {
+                        continue;
+                    }
+                    // reflection loads field and method types; they must come from (and be transformed by) the game loader
+                    Thread.currentThread().setContextClassLoader(minecraft.getClassLoader());
+                    Ref r = new Ref(m, minecraft.getClassLoader());
+                    // loaders may keep official class names but rename members: the table must know the fields too
+                    if (candidates.size() > 1 && r.field(minecraft, "player") == null) {
+                        continue;
+                    }
+                    mappings = m;
+                    names = candidate;
+                    gameLoader = minecraft.getClassLoader();
+                    ref = r;
+                    break;
+                }
+                if (ref == null) {
                     sleep(500);
                 }
             }
-            Ref ref = new Ref(mappings, minecraft.getClassLoader());
             Game g = new Game(ref, "true".equals(args.get("headless")));
             while (g.minecraft() == null) {
                 sleep(250);
@@ -173,6 +209,7 @@ public final class Probe {
                 @Override
                 public void run() {
                     try {
+                        useGameLoader();
                         a.pump();
                     } catch (Throwable ignored) {
                         // keep the timer alive
@@ -186,6 +223,7 @@ public final class Probe {
                 @Override
                 public void run() {
                     try {
+                        useGameLoader();
                         r.enforceRender();
                     } catch (Throwable ignored) {
                         // keep the timer alive
@@ -195,6 +233,13 @@ public final class Probe {
         } catch (Throwable t) {
             initError = t.toString();
             t.printStackTrace();
+        }
+    }
+
+    private void useGameLoader() {
+        ClassLoader loader = gameLoader;
+        if (loader != null && Thread.currentThread().getContextClassLoader() != loader) {
+            Thread.currentThread().setContextClassLoader(loader);
         }
     }
 
@@ -225,6 +270,7 @@ public final class Probe {
 
     @SuppressWarnings("unchecked")
     private void handle(OutputStream out, String line) {
+        useGameLoader();
         Object id = null;
         Map<String, Object> response = new LinkedHashMap<String, Object>();
         try {
@@ -265,6 +311,7 @@ public final class Probe {
             info.put("initError", initError);
             info.put("mappedClasses", mappings == null ? 0 : mappings.size());
             info.put("obfuscated", mappings != null && !mappings.isIdentity());
+            info.put("names", names);
             if (game != null) {
                 info.put("headless", game.headless());
                 info.put("renderToggle", render.renderToggleSupported());

@@ -1,9 +1,18 @@
 // End-to-end check of player actions against a real server (1.17+ server; the bot must be an operator).
 // Usage: node scripts/actions-smoke.mjs <version> <host:port> [name]
+// CALCITE_RENDER=off|on-demand|always, CALCITE_LOADER=fabric|forge|neoforge[@version], CALCITE_MODS=spec,spec
 import { Client } from '../dist/index.js';
 
 const [version = '1.21.11', server = 'localhost:25565', name = 'ActBot'] = process.argv.slice(2);
-const client = new Client({ name, version, server, render: process.env.CALCITE_RENDER ?? 'off', account: { type: 'offline', username: name.slice(0, 16) } });
+const client = new Client({
+  name,
+  version,
+  server,
+  render: process.env.CALCITE_RENDER ?? 'off',
+  account: { type: 'offline', username: name.slice(0, 16) },
+  loader: process.env.CALCITE_LOADER,
+  mods: process.env.CALCITE_MODS ? process.env.CALCITE_MODS.split(',') : undefined,
+});
 client.on('phase', (p) => console.log(`[phase] ${p}`));
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -27,7 +36,8 @@ const cmd = async (c) => {
 const slotOf = (inv, id) => inv.items.find((i) => i.id === id && i.slot < 9)?.slot;
 
 try {
-  await client.start();
+  const started = await client.start();
+  if (started.loader) console.log(`loader ${started.loader}, mods ${JSON.stringify(started.mods ?? [])}`);
   let p = (await client.state()).player;
   // a platform at y=100: clients older than 1.18 do not receive blocks below y=0 through ViaBackwards
   const bx = Math.floor(p.x), by = 100, bz = Math.floor(p.z);

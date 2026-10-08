@@ -32,10 +32,18 @@ export function hmcQuote(arg: string): string {
 
 /**
  * Writes the HeadlessMC profile used when launching `versionId` from `location`. HeadlessMC only runs a version
- * with the exact Java major the version asks for; the profile pins the runtime Calcite chose instead.
+ * with the exact Java major the version asks for; the profile pins the runtime Calcite chose instead. With a
+ * {@code loader} the profile selects that platform (fabric, forge, neoforge) and build for Minecraft {@code versionId}.
  */
-export async function writeHmcProfile(location: string, versionId: string, gameDir: string, javaMajor: number): Promise<void> {
-  const version = { side: null, platform: 'vanilla', version: versionId, build: null };
+export async function writeHmcProfile(
+  location: string,
+  versionId: string,
+  gameDir: string,
+  javaMajor: number,
+  loader?: { kind: string; build?: string },
+): Promise<void> {
+  const [platform, , build] = loader ? hmcVersionArgs(versionId, loader) : ['vanilla'];
+  const version = { side: null, platform, version: versionId, build: build ?? null };
   const profile = {
     name: 'calcite',
     version,
@@ -53,6 +61,20 @@ export async function writeHmcProfile(location: string, versionId: string, gameD
   };
   await mkdir(join(location, 'profiles'), { recursive: true });
   await writeFile(join(location, 'profiles', 'calcite.json'), JSON.stringify(profile, null, 2));
+}
+
+/**
+ * HeadlessMC's version argument: "1.21.11", or "fabric 1.21.11 0.19.5" for a mod loader. HeadlessMC names NeoForge
+ * builds without the Minecraft part of their version (NeoForge 21.11.45 for 1.21.11 is build "45").
+ */
+export function hmcVersionArgs(versionId: string, loader?: { kind: string; build?: string }): string[] {
+  if (!loader) return [versionId];
+  let build = loader.build;
+  if (build && loader.kind === 'neoforge') {
+    const prefix = `${versionId.startsWith('1.') ? versionId.slice(2) : versionId}.`;
+    if (build.startsWith(prefix)) build = build.slice(prefix.length);
+  }
+  return [loader.kind, versionId, ...(build ? [build] : [])];
 }
 
 export interface HmcRun {

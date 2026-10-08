@@ -5,16 +5,17 @@ import { Socket } from 'node:net';
 import { join } from 'node:path';
 import { prepareAccount, syncAccount } from './accounts.js';
 import { acquireDisplay, which, type DisplayLease } from './display.js';
-import { ensureHmc, hmcListEntry, hmcQuote, killTree, runHmc, writeHmcProfile, type HmcRun } from './hmc.js';
-import { ensureJava, ensureLauncherJava, type JavaInstall } from './java.js';
+import { hmcListEntry, hmcQuote, hmcVersionArgs, killTree, runHmc, writeHmcProfile, type HmcRun } from './hmc.js';
+import { installProbe, prepareGame, type PreparedGame } from './install.js';
+import { parseLoader } from './loaders.js';
 import { acquireLock } from './lock.js';
 import { logger } from './log.js';
+import { resolveMods, syncMods, type ModFile } from './mods.js';
 import { javaProxyProps } from './net.js';
-import { ensureClientJar, getVersionJson, requiredJavaMajor, resolveNames, resolveVersion, supportsQuickPlay, type NameMode, type VersionJson } from './mojang.js';
+import { supportsQuickPlay } from './mojang.js';
 import { defaultOptions, writeOptions } from './options.js';
 import { resolvePaths, type CalcitePaths } from './paths.js';
 import { ProbeError, ProbeServer } from './probe-server.js';
-import { installProbe } from './install.js';
 import {
   CalciteError,
   defaultUsername,
@@ -33,7 +34,11 @@ import {
 const NAME_RE = /^[A-Za-z0-9_.-]{1,64}$/;
 const MAX_LOG = 5000;
 const MAX_CHAT = 1000;
-const HEADLESS_MIN_JAVA = 17;
+
+/** Escapes a value for a java.util.Properties file. */
+function propValue(value: string): string {
+  return value.replace(/\\/g, '\\\\').replace(/[:=]/g, (c) => `\\${c}`);
+}
 
 async function tcpReachable(host: string, port: number, timeoutMs = 3000): Promise<boolean> {
   return new Promise((resolve) => {
@@ -71,10 +76,8 @@ export abstract class ClientCore extends EventEmitter {
   private display: DisplayLease | null = null;
   private releaseInstance: (() => Promise<void>) | null = null;
   private probeConfig: string | null = null;
-  private java: JavaInstall | null = null;
-  private launcherJava: JavaInstall | null = null;
-  private versionJson: VersionJson | null = null;
-  private names: NameMode | null = null;
+  private game: PreparedGame | null = null;
+  private mods: ModFile[] = [];
   protected headlessValue = false;
   protected lastState: GameState | undefined;
   private lastError: string | undefined;
@@ -104,6 +107,9 @@ export abstract class ClientCore extends EventEmitter {
       throw new CalciteError('bad_username', `Offline username must be 3-16 letters, digits or underscores: "${this.account.username}"`);
     }
     this.server = options.server ? parseServer(options.server) : undefined;
+    if (!parseLoader(options.loader) && options.mods?.length) {
+      throw new CalciteError('bad_mod', 'Mods need a mod loader (loader "fabric", "forge" or "neoforge")');
+    }
     this.log = logger(`client:${options.name}`);
     this.on('error', () => undefined); // never crash the host process on an unhandled 'error' event
   }
@@ -180,21 +186,22 @@ export abstract class ClientCore extends EventEmitter {
   /** Downloads and verifies everything needed to launch (idempotent). */
   async prepare(): Promise<void> {
     this.setPhase('preparing');
-    const version = await resolveVersion(this.paths, this.options.version);
-    this.versionJson = await getVersionJson(this.paths, version);
-    const clientJar = await ensureClientJar(this.paths, this.versionJson);
-    this.names = await resolveNames(this.paths, this.versionJson, clientJar);
-    if (this.names.kind === 'unsupported') this.note(`probe disabled: ${this.names.reason}`);
     this.headlessValue = this.resolveHeadless();
-    // HeadlessMC 3's LWJGL stubs need Java 9+; the Java 8 versions (up to 1.16.5) run headless on Java 17 instead
-    const required = requiredJavaMajor(this.versionJson);
-    const major = this.headlessValue && required < 9 ? HEADLESS_MIN_JAVA : required;
-    this.java = await ensureJava(this.paths, major, {
+    const game = await prepareGame(this.paths, {
+      version: this.options.version,
+      loader: this.options.loader,
       javaPath: this.options.javaPath,
-      allowDownload: this.options.allowJavaDownload,
+      allowJavaDownload: this.options.allowJavaDownload,
+      headless: this.headlessValue,
+      onLine: (line) => this.note(`installer: ${line}`),
     });
-    this.note(`java ${this.java.version} (${this.java.path}) for Minecraft ${this.versionJson.id}`);
-    this.launcherJava = await ensureLauncherJava(this.paths, { allowDownload: this.options.allowJavaDownload });
+    this.game = game;
+    if (game.names.kind === 'unsupported') this.note(`probe disabled: ${game.names.reason}`);
+    const loader = game.loader ? ` with ${game.loader.kind} ${game.loader.build}` : '';
+    this.note(`java ${game.java.version} (${game.java.path}) for Minecraft ${game.json.id}${loader}`);
+    this.mods = game.loader ? await resolveMods(this.paths, this.options.mods ?? [], game.json.id, game.loader.kind) : [];
+    await syncMods(this.gameDir, this.mods);
+    for (const m of this.mods) this.note(`mod ${m.name} (${m.source})`);
   }
 
   private resolveHeadless(): boolean {
@@ -207,9 +214,7 @@ export abstract class ClientCore extends EventEmitter {
   }
 
   private async launch(): Promise<void> {
-    const json = this.versionJson!;
-    const java = this.java!;
-    const hmcJar = await ensureHmc(this.paths);
+    const { json, java, loader, names, hmcJar } = this.game!;
     const probeJar = await installProbe(this.paths);
 
     if (this.server) {
@@ -231,7 +236,8 @@ export abstract class ClientCore extends EventEmitter {
     const cfg = [
       `port=${this.probe.port}`,
       `token=${this.probe.token}`,
-      `mappings=${this.names?.kind === 'mappings' ? this.names.file.replace(/\\/g, '\\\\').replace(/:/g, '\\:') : ''}`,
+      // name tables the probe tries in order (a mapping file or "official")
+      ...(names.kind === 'probe' ? names.candidates.map((c, i) => `mappings.${i + 1}=${propValue(c)}`) : []),
       `headless=${this.headlessValue}`,
       `render=${this.render === 'always' ? 'on' : 'off'}`,
       'exitOnDisconnect=true',
@@ -253,7 +259,7 @@ export abstract class ClientCore extends EventEmitter {
 
     const proxyArgs = Object.entries(javaProxyProps()).map(([k, v]) => `-D${k}=${v}`);
     const jvmArgs = [`-Xmx${this.options.memory ?? '2G'}`, ...proxyArgs, ...(this.options.jvmArgs ?? [])];
-    if (this.names?.kind !== 'unsupported') jvmArgs.unshift(`-javaagent:${probeJar}=${this.probeConfig}`);
+    if (names.kind !== 'unsupported') jvmArgs.unshift(`-javaagent:${probeJar}=${this.probeConfig}`);
     // HeadlessMC's stubbed LWJGL buffers have no native address; JOML's Unsafe path writes to it and crashes the JVM
     if (this.headlessValue) jvmArgs.unshift('-Djoml.nounsafe=true');
     const gameArgs = [...(this.options.gameArgs ?? [])];
@@ -271,7 +277,7 @@ export abstract class ClientCore extends EventEmitter {
       const code = (err as { code?: string }).code;
       throw code ? new CalciteError(code, (err as Error).message) : err;
     }
-    await writeHmcProfile(location, json.id, this.gameDir, java.major);
+    await writeHmcProfile(location, json.id, this.gameDir, java.major, loader);
     const props: Record<string, string> = {
       'hmc.files.mc': this.paths.minecraft,
       'hmc.files.game': this.gameDir,
@@ -282,7 +288,7 @@ export abstract class ClientCore extends EventEmitter {
     };
     const command = [
       'launch',
-      json.id,
+      ...hmcVersionArgs(json.id, loader),
       ...(offline ? ['--offline'] : []),
       ...(this.headlessValue ? ['--headless'] : []),
       `--jvm=${jvmArgs.map(hmcQuote).join(' ')}`,
@@ -315,7 +321,7 @@ export abstract class ClientCore extends EventEmitter {
         void killTree(run.child);
       };
       this.run = runHmc({
-        javaPath: this.launcherJava!.path,
+        javaPath: this.game!.launcherJava.path,
         hmcJar,
         location,
         props,
@@ -365,6 +371,16 @@ export abstract class ClientCore extends EventEmitter {
     const prev = this.lastState;
     this.lastState = state;
     if (JSON.stringify(prev) !== JSON.stringify(state)) this.emit('state', state);
+    if (state.screen && /LoadingErrorScreen|ModLoadingError/.test(state.screen) && !this.fatalCode && this.run) {
+      // Forge/NeoForge stay on an error screen when mods fail to load; relaunching would not help
+      const errors = this.logs.filter((l) => l.source === 'game' && /\/(ERROR|FATAL)\]|Exception|[Mm]issing|requires/.test(l.line)).slice(-12);
+      this.fatalCode = 'mod_loading_failed';
+      this.lastError = `Mod loading failed (${state.screen}); check the mods and the loader version:\n${errors.map((l) => l.line).join('\n')}`;
+      this.note(this.lastError);
+      this.setPhase('crashed');
+      void killTree(this.run.child);
+      return;
+    }
     if (state.inGame && !state.loading && !LOADING_SCREEN.test(state.screen ?? '')) {
       if (this.phaseValue !== 'in_game') {
         this.inGameSince = Date.now();
@@ -490,7 +506,9 @@ export abstract class ClientCore extends EventEmitter {
   status(): ClientStatus {
     return {
       name: this.options.name,
-      version: this.versionJson?.id ?? this.options.version,
+      version: this.game?.json.id ?? this.options.version,
+      loader: this.game?.loader ? `${this.game.loader.kind}@${this.game.loader.build}` : this.options.loader,
+      mods: this.mods.length ? this.mods.map((m) => m.name) : undefined,
       phase: this.phaseValue,
       render: this.render,
       headless: this.headlessValue,
@@ -498,7 +516,7 @@ export abstract class ClientCore extends EventEmitter {
       server: this.server,
       gameDir: this.gameDir,
       pid: this.run?.child.pid,
-      java: this.java?.version,
+      java: this.game?.java.version,
       startedAt: this.startedAt,
       reconnects: this.reconnects,
       lastError: this.lastError,
@@ -510,8 +528,8 @@ export abstract class ClientCore extends EventEmitter {
   // ------------------------------------------------------------------ operations
 
   protected requireProbe(): ProbeServer {
-    if (this.names?.kind === 'unsupported') {
-      throw new CalciteError('unsupported_version', this.names.reason);
+    if (this.game?.names.kind === 'unsupported') {
+      throw new CalciteError('unsupported_version', this.game.names.reason);
     }
     if (!this.probe?.connected) throw new CalciteError('not_connected', `Client "${this.options.name}" is not running (phase ${this.phaseValue})`);
     return this.probe;

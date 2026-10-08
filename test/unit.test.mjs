@@ -5,13 +5,17 @@ import { join } from 'node:path';
 import { test } from 'node:test';
 import { parseServer, CalciteError, Client } from '../dist/client.js';
 import { parseJavaSettings, pickJava } from '../dist/java.js';
-import { supportsQuickPlay, requiredJavaMajor, zipContains } from '../dist/mojang.js';
+import { supportsQuickPlay, requiredJavaMajor } from '../dist/mojang.js';
+import { readZipEntry, zipContains } from '../dist/zip.js';
+import { compareBuilds, findLoader, loaderBuild, parseLoader } from '../dist/loaders.js';
+import { compose, parseMojang, parseTiny, parseTsrg } from '../dist/names.js';
+import { syncMods } from '../dist/mods.js';
 import { parseOptions, serializeOptions, writeOptions, defaultOptions } from '../dist/options.js';
 import { bypassProxy, javaProxyProps, proxyFor } from '../dist/net.js';
 import { resolvePaths, safeProbeDir } from '../dist/paths.js';
 import { acquireLock } from '../dist/lock.js';
 import { listAccounts, offlineUuid, prepareAccount, removeAccount, syncAccount } from '../dist/accounts.js';
-import { hmcListEntry, hmcQuote } from '../dist/hmc.js';
+import { hmcListEntry, hmcQuote, hmcVersionArgs } from '../dist/hmc.js';
 
 test('parseServer', () => {
   assert.deepEqual(parseServer('mc.example.com'), { host: 'mc.example.com', port: 25565 });
@@ -175,9 +179,14 @@ test('zipContains reads the central directory', async () => {
     const { execFileSync } = await import('node:child_process');
     const { jdkTool } = await import('../scripts/build-probe.mjs');
     await writeFile(join(dir, 'A.txt'), 'a');
-    execFileSync(jdkTool('jar'), ['cf', join(dir, 't.jar'), '-C', dir, 'A.txt']);
+    await writeFile(join(dir, 'C.txt'), 'calcite '.repeat(500));
+    execFileSync(jdkTool('jar'), ['cf', join(dir, 't.jar'), '-C', dir, 'A.txt', '-C', dir, 'C.txt']);
+    execFileSync(jdkTool('jar'), ['cf0', join(dir, 's.jar'), '-C', dir, 'C.txt']);
     assert.equal(await zipContains(join(dir, 't.jar'), 'A.txt'), true);
     assert.equal(await zipContains(join(dir, 't.jar'), 'B.txt'), false);
+    assert.equal((await readZipEntry(join(dir, 't.jar'), 'C.txt'))?.toString(), 'calcite '.repeat(500));
+    assert.equal((await readZipEntry(join(dir, 's.jar'), 'C.txt'))?.toString(), 'calcite '.repeat(500));
+    assert.equal(await readZipEntry(join(dir, 't.jar'), 'B.txt'), null);
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
@@ -198,4 +207,138 @@ test('proxy environment is converted to Java system properties', () => {
   } finally {
     process.env = saved;
   }
+});
+
+test('parseLoader and loader version ids', () => {
+  assert.equal(parseLoader(undefined), undefined);
+  assert.equal(parseLoader('vanilla'), undefined);
+  assert.deepEqual(parseLoader('Fabric'), { kind: 'fabric', build: undefined });
+  assert.deepEqual(parseLoader('neoforge@21.11.45'), { kind: 'neoforge', build: '21.11.45' });
+  assert.throws(() => parseLoader('quilt'), CalciteError);
+  assert.throws(() => parseLoader('forge@../x'), CalciteError);
+  assert.equal(loaderBuild('fabric', 'fabric-loader-0.19.5-1.21.11', '1.21.11'), '0.19.5');
+  assert.equal(loaderBuild('fabric', 'fabric-loader-0.19.5-1.21.1', '1.21.11'), undefined);
+  assert.equal(loaderBuild('forge', '1.20.1-forge-47.4.26', '1.20.1'), '47.4.26');
+  assert.equal(loaderBuild('neoforge', 'neoforge-21.11.45', '1.21.11'), '21.11.45');
+  assert.ok(compareBuilds('0.19.10', '0.19.5') > 0);
+  assert.ok(compareBuilds('21.11.45', '21.11.45-beta') < 0);
+  assert.deepEqual(hmcVersionArgs('1.21.11'), ['1.21.11']);
+  assert.deepEqual(hmcVersionArgs('1.21.11', { kind: 'fabric' }), ['fabric', '1.21.11']);
+  assert.deepEqual(hmcVersionArgs('1.21.11', { kind: 'neoforge', build: '21.11.45' }), ['neoforge', '1.21.11', '45']);
+  assert.deepEqual(hmcVersionArgs('26.3', { kind: 'neoforge', build: '26.3.7-beta' }), ['neoforge', '26.3', '7-beta']);
+  assert.deepEqual(hmcVersionArgs('1.20.1', { kind: 'forge', build: '47.4.26' }), ['forge', '1.20.1', '47.4.26']);
+});
+
+test('findLoader picks the requested or newest installed build', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'calcite-loader-'));
+  try {
+    const paths = resolvePaths(home);
+    const { mkdir } = await import('node:fs/promises');
+    for (const [id, inherits] of [['fabric-loader-0.19.5-1.21.11', '1.21.11'], ['fabric-loader-0.19.10-1.21.11', '1.21.11'], ['neoforge-21.1.200', '1.21.1']]) {
+      await mkdir(join(paths.minecraft, 'versions', id), { recursive: true });
+      await writeFile(join(paths.minecraft, 'versions', id, `${id}.json`), JSON.stringify({ id, inheritsFrom: inherits }));
+    }
+    assert.equal((await findLoader(paths, '1.21.11', { kind: 'fabric' }))?.build, '0.19.10');
+    assert.equal((await findLoader(paths, '1.21.11', { kind: 'fabric', build: '0.19.5' }))?.id, 'fabric-loader-0.19.5-1.21.11');
+    assert.equal(await findLoader(paths, '1.21.11', { kind: 'neoforge' }), undefined);
+    assert.equal((await findLoader(paths, '1.21.1', { kind: 'neoforge' }))?.build, '21.1.200');
+  } finally {
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+const MOJANG = [
+  '# comment',
+  'net.minecraft.client.Minecraft -> fgo:',
+  '    net.minecraft.client.player.LocalPlayer player -> a',
+  '    int fps -> b',
+  '    java.lang.String fps -> c',
+  '    12:15:void tick() -> d',
+  '    20:22:void attack(net.minecraft.world.entity.Entity,int[]):33:35 -> a',
+  '    40:41:void <init>() -> <init>',
+  '    50:51:java.lang.String toString() -> toString',
+  '    60:61:void unmapped() -> e',
+  'net.minecraft.client.player.LocalPlayer -> fzz:',
+  'net.minecraft.world.entity.Entity -> bsr:',
+  'com.mojang.Library -> com.mojang.Library:',
+  '    void open() -> open',
+  '',
+].join('\n');
+
+test('Mojang mappings compose with intermediary (tiny v1 and v2)', () => {
+  const v1 = [
+    'v1\tofficial\tintermediary',
+    'CLASS\tfgo\tnet/minecraft/class_310',
+    'CLASS\tfzz\tnet/minecraft/class_746',
+    'CLASS\tbsr\tnet/minecraft/class_1297',
+    'FIELD\tfgo\tLfzz;\ta\tfield_1724',
+    'FIELD\tfgo\tI\tb\tfield_1',
+    'FIELD\tfgo\tLjava/lang/String;\tc\tfield_2',
+    'METHOD\tfgo\t()V\td\tmethod_1574',
+    'METHOD\tfgo\t(Lbsr;[I)V\ta\tmethod_9',
+  ].join('\n');
+  const v2 = [
+    'tiny\t2\t0\tofficial\tintermediary',
+    'c\tfgo\tnet/minecraft/class_310',
+    '\tf\tLfzz;\ta\tfield_1724',
+    '\tf\tI\tb\tfield_1',
+    '\tf\tLjava/lang/String;\tc\tfield_2',
+    '\tm\t()V\td\tmethod_1574',
+    '\t\tp\t1\t\tignored',
+    '\tm\t(Lbsr;[I)V\ta\tmethod_9',
+    'c\tfzz\tnet/minecraft/class_746',
+    'c\tbsr\tnet/minecraft/class_1297',
+  ].join('\n');
+  for (const tiny of [v1, v2]) {
+    const target = parseTiny(tiny);
+    const out = compose(parseMojang(MOJANG), target, (c) => target.classes.get(c.obf.replace(/\./g, '/'))?.replace(/\//g, '.') ?? (c.obf === c.named ? c.named : undefined));
+    assert.equal(
+      out,
+      [
+        'net.minecraft.client.Minecraft -> net.minecraft.class_310:',
+        '    net.minecraft.client.player.LocalPlayer player -> field_1724',
+        '    int fps -> field_1',
+        '    java.lang.String fps -> field_2',
+        '    void tick() -> method_1574',
+        '    void attack(net.minecraft.world.entity.Entity,int[]) -> method_9',
+        '    java.lang.String toString() -> toString',
+        'net.minecraft.client.player.LocalPlayer -> net.minecraft.class_746:',
+        'net.minecraft.world.entity.Entity -> net.minecraft.class_1297:',
+        'com.mojang.Library -> com.mojang.Library:',
+        '    void open() -> open',
+        '',
+      ].join('\n'),
+    );
+  }
+});
+
+test('Mojang mappings compose with SRG (tsrg2)', () => {
+  const tsrg = ['tsrg2 obf srg id', 'fgo net/minecraft/src/C_1_ 1', '\ta f_91074_ 2', '\td ()V m_91398_ 3', '\t\t0 o p_0_ 4', '\tstatic', 'fzz net/minecraft/src/C_2_ 5'].join('\n');
+  const out = compose(parseMojang(MOJANG), parseTsrg(tsrg), (c) => c.named);
+  assert.match(out, /^net\.minecraft\.client\.Minecraft -> net\.minecraft\.client\.Minecraft:\n {4}net\.minecraft\.client\.player\.LocalPlayer player -> f_91074_\n {4}void tick\(\) -> m_91398_\n/);
+});
+
+test('syncMods replaces only the mods Calcite placed', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'calcite-mods-'));
+  try {
+    const { readdir, mkdir } = await import('node:fs/promises');
+    await writeFile(join(dir, 'a.jar'), 'a');
+    await writeFile(join(dir, 'b.jar'), 'b');
+    const game = join(dir, 'game');
+    await mkdir(join(game, 'mods'), { recursive: true });
+    await writeFile(join(game, 'mods', 'mine.jar'), 'user');
+    await syncMods(game, [{ name: 'a.jar', file: join(dir, 'a.jar'), source: 'a' }, { name: 'b.jar', file: join(dir, 'b.jar'), source: 'b' }]);
+    assert.deepEqual((await readdir(join(game, 'mods'))).sort(), ['.calcite-mods.json', 'a.jar', 'b.jar', 'mine.jar']);
+    await syncMods(game, [{ name: 'b.jar', file: join(dir, 'b.jar'), source: 'b' }]);
+    assert.deepEqual((await readdir(join(game, 'mods'))).sort(), ['.calcite-mods.json', 'b.jar', 'mine.jar']);
+    await syncMods(game, []);
+    assert.deepEqual(await readdir(join(game, 'mods')), ['mine.jar']);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('Client rejects mods without a loader', () => {
+  assert.throws(() => new Client({ name: 'm', version: '1.21.11', mods: ['x.jar'], paths: resolvePaths('/tmp/calcite-unused') }), /loader/);
+  assert.throws(() => new Client({ name: 'm', version: '1.21.11', loader: 'quilt', paths: resolvePaths('/tmp/calcite-unused') }), /Unknown mod loader/);
 });

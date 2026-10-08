@@ -16,6 +16,17 @@ export interface ClientOptions {
   name: string;
   /** Minecraft version id, "latest" or "snapshot". */
   version: string;
+  /**
+   * Mod loader: "fabric", "forge" or "neoforge", optionally with a loader version ("fabric@0.19.5"). Installed on
+   * first use; without a version the newest installed one (or the loader's current release) is used.
+   */
+  loader?: string;
+  /**
+   * Mods to put in the game's mods folder (needs a loader): local jars or folders of jars, http(s) URLs, or
+   * "modrinth:<project>[@<version>]" (resolved for this Minecraft version and loader, with required dependencies).
+   * Mods Calcite placed earlier and no longer listed are removed; other files in the folder are kept.
+   */
+  mods?: string[];
   /** Server to join ("host[:port]"). Without a server the client stays on the title screen. */
   server?: string | ServerAddress;
   /** Account: offline (any username, for online-mode=false servers) or a stored Microsoft account. */
@@ -207,6 +218,10 @@ export interface EntityQuery {
 export interface ClientStatus {
   name: string;
   version: string;
+  /** Mod loader and its version, e.g. "fabric@0.19.5". */
+  loader?: string;
+  /** File names of the mods Calcite placed in the mods folder. */
+  mods?: string[];
   phase: Phase;
   render: RenderMode;
   headless: boolean;
