@@ -2,7 +2,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import { copyFile, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { ensureHmc, hmcListEntry, hmcQuote, hmcVersionArgs, runHmc, writeHmcProfile } from './hmc.js';
+import { ensureHmc, hmcJavaHome, hmcListEntry, hmcQuote, hmcVersionArgs, runHmc, writeHmcProfile } from './hmc.js';
 import { ensureJava, ensureLauncherJava, type JavaInstall } from './java.js';
 import { findLoader, formatLoader, parseLoader, type InstalledLoader, type LoaderSpec } from './loaders.js';
 import { withLock } from './lock.js';
@@ -102,7 +102,7 @@ async function hmcDryLaunch(paths: CalcitePaths, json: VersionJson, loader: Load
       props: {
         'hmc.files.mc': paths.minecraft,
         'hmc.files.game': join(location, 'game'),
-        'hmc.java.versions': hmcListEntry(rt.java.path),
+        'hmc.java.versions': hmcListEntry(hmcJavaHome(rt.java.path)),
         'hmc.java.download': 'false',
       },
       command: ['launch', ...hmcVersionArgs(json.id, loader), '--offline', '--headless', `--jvm=${hmcQuote('-version')}`],

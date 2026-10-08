@@ -15,7 +15,7 @@ import { bypassProxy, javaProxyProps, proxyFor } from '../dist/net.js';
 import { resolvePaths, safeProbeDir } from '../dist/paths.js';
 import { acquireLock } from '../dist/lock.js';
 import { listAccounts, offlineUuid, prepareAccount, removeAccount, syncAccount } from '../dist/accounts.js';
-import { hmcListEntry, hmcQuote, hmcVersionArgs } from '../dist/hmc.js';
+import { hmcJavaHome, hmcListEntry, hmcQuote, hmcVersionArgs } from '../dist/hmc.js';
 
 test('parseServer', () => {
   assert.deepEqual(parseServer('mc.example.com'), { host: 'mc.example.com', port: 25565 });
@@ -161,6 +161,8 @@ test('accounts store parsing, instance preparation and removal', async () => {
 });
 
 test('HeadlessMC argument quoting', () => {
+  assert.equal(hmcJavaHome('C:\\Program Files\\Zulu\\zulu-25\\bin\\java.exe'), 'C:\\Program Files\\Zulu\\zulu-25');
+  assert.equal(hmcJavaHome('/opt/java/bin/java'), '/opt/java');
   assert.equal(hmcQuote('-javaagent:C:\\a b\\p.jar=x'), '"-javaagent:C:\\\\a b\\\\p.jar=x"');
   assert.equal(hmcQuote('a"b'), '"a\\"b"');
   assert.equal(hmcListEntry('C:\\Java,1\\java.exe'), 'C:\\\\Java\\,1\\\\java.exe');

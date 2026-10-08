@@ -5,7 +5,7 @@ import { Socket } from 'node:net';
 import { join } from 'node:path';
 import { prepareAccount, syncAccount } from './accounts.js';
 import { acquireDisplay, which, type DisplayLease } from './display.js';
-import { hmcListEntry, hmcQuote, hmcVersionArgs, killTree, runHmc, writeHmcProfile, type HmcRun } from './hmc.js';
+import { hmcJavaHome, hmcListEntry, hmcQuote, hmcVersionArgs, killTree, runHmc, writeHmcProfile, type HmcRun } from './hmc.js';
 import { installProbe, prepareGame, type PreparedGame } from './install.js';
 import { parseLoader } from './loaders.js';
 import { acquireLock } from './lock.js';
@@ -306,7 +306,7 @@ export abstract class ClientCore extends EventEmitter {
     const props: Record<string, string> = {
       'hmc.files.mc': this.paths.minecraft,
       'hmc.files.game': this.gameDir,
-      'hmc.java.versions': hmcListEntry(java.path),
+      'hmc.java.versions': hmcListEntry(hmcJavaHome(java.path)),
       'hmc.java.download': 'false',
       // HeadlessMC only lets offline accounts render when it sees Xvfb running
       'hmc.xvfb.check': String(virtualDisplay),

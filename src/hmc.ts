@@ -25,6 +25,12 @@ export function hmcListEntry(value: string): string {
   return value.replace(/\\/g, '\\\\').replace(/,/g, '\\,');
 }
 
+/** Converts a Java executable path to the Java home path expected by HeadlessMC. */
+export function hmcJavaHome(javaPath: string): string {
+  // HeadlessMC 的 Java 配置接收安装目录；显式剥离 Windows 和 POSIX 的 bin/java 可执行文件部分。
+  return javaPath.replace(/[\\/]bin[\\/]java(?:\.exe)?$/i, '');
+}
+
 /** Quotes one argument for HeadlessMC's `--jvm`/`--game` options, which are split like a shell command line. */
 export function hmcQuote(arg: string): string {
   return `"${arg.replace(/[\\"]/g, (c) => `\\${c}`)}"`;
