@@ -1,12 +1,9 @@
 package calcite.probe;
 
 import java.lang.reflect.Method;
-import java.util.concurrent.Callable;
-
-import calcite.probe.Game.ProbeException;
 
 /** Chat, commands, respawning and joining servers. */
-final class Session {
+final class Session implements Ops.Module {
 
     private final Game game;
     private final Ref ref;
@@ -16,100 +13,88 @@ final class Session {
         this.ref = ref;
     }
 
-    public void chat(final String message) throws Exception {
-        final Object mc = game.requireMinecraft();
-        game.onGameThread(new Callable<Object>() {
-            @Override
-            public Object call() throws Exception {
-                Object player = game.requirePlayer(mc);
-                Object conn = game.optGet(player, "connection");
-                if (conn != null && game.invoke(conn, "sendChat", message)) {
-                    return null; // 1.19.3+
-                }
-                if (game.invoke(player, "chatSigned", message, null)) {
-                    return null; // 1.19.1 - 1.19.2
-                }
-                if (game.invoke(player, "chat", message)) {
-                    return null; // <= 1.19
-                }
-                throw new ProbeException("unsupported", "No chat API found for this version");
-            }
-        }, 5000);
+    @Override
+    public void register(Ops ops) {
+        ops.action("chat", a -> chat(a.str("message")));
+        ops.action("command", a -> command(a.str("command")));
+        ops.action("respawn", a -> respawn());
+        ops.action("connect", a -> connect(a.str("host"), a.integer("port", 25565)));
     }
 
-    public void command(String raw) throws Exception {
+    void chat(final String message) throws Exception {
+        game.withPlayer((mc, player) -> {
+            Object conn = game.optGet(player, "connection");
+            if (conn != null && game.invoke(conn, "sendChat", message)) {
+                return null; // 1.19.3+
+            }
+            if (game.invoke(player, "chatSigned", message, null)) {
+                return null; // 1.19.1 - 1.19.2
+            }
+            if (game.invoke(player, "chat", message)) {
+                return null; // <= 1.19
+            }
+            throw new ProbeException("unsupported", "No chat API found for this version");
+        });
+    }
+
+    void command(String raw) throws Exception {
         final String command = raw.startsWith("/") ? raw.substring(1) : raw;
-        final Object mc = game.requireMinecraft();
-        game.onGameThread(new Callable<Object>() {
-            @Override
-            public Object call() throws Exception {
-                Object player = game.requirePlayer(mc);
-                Object conn = game.optGet(player, "connection");
-                if (conn != null && (game.invoke(conn, "sendCommand", command) || game.invoke(conn, "sendUnsignedCommand", command))) {
-                    return null; // 1.19.3+
-                }
-                if (game.invoke(player, "commandUnsigned", command) || game.invoke(player, "commandSigned", command, null)
-                        || game.invoke(player, "command", command)) {
-                    return null; // 1.19 - 1.19.2
-                }
-                if (game.invoke(player, "chat", "/" + command)) {
-                    return null; // <= 1.18
-                }
-                throw new ProbeException("unsupported", "No command API found for this version");
+        game.withPlayer((mc, player) -> {
+            Object conn = game.optGet(player, "connection");
+            if (conn != null && (game.invoke(conn, "sendCommand", command) || game.invoke(conn, "sendUnsignedCommand", command))) {
+                return null; // 1.19.3+
             }
-        }, 5000);
+            if (game.invoke(player, "commandUnsigned", command) || game.invoke(player, "commandSigned", command, null)
+                    || game.invoke(player, "command", command)) {
+                return null; // 1.19 - 1.19.2
+            }
+            if (game.invoke(player, "chat", "/" + command)) {
+                return null; // <= 1.18
+            }
+            throw new ProbeException("unsupported", "No command API found for this version");
+        });
     }
 
-    public void respawn() throws Exception {
-        final Object mc = game.requireMinecraft();
-        game.onGameThread(new Callable<Object>() {
-            @Override
-            public Object call() throws Exception {
-                Object player = game.requirePlayer(mc);
-                if (!game.invoke(player, "respawn")) {
-                    throw new ProbeException("unsupported", "LocalPlayer#respawn is not available");
-                }
-                // close the death screen
-                game.setScreen(mc, null);
-                return null;
+    void respawn() throws Exception {
+        game.withPlayer((mc, player) -> {
+            if (!game.invoke(player, "respawn")) {
+                throw new ProbeException("unsupported", "LocalPlayer#respawn is not available");
             }
-        }, 5000);
+            game.setScreen(mc, null); // close the death screen
+            return null;
+        });
     }
 
     /**
      * Joins a server from the current screen through the game's own ConnectScreen. Used for versions without
      * Quick Play, where the --server argument can be ignored (e.g. 1.16.4+ when multiplayer privileges are unknown).
      */
-    public void connect(final String host, final int port) throws Exception {
+    void connect(final String host, final int port) throws Exception {
         final Object mc = game.requireMinecraft();
-        game.onGameThread(new Callable<Object>() {
-            @Override
-            public Object call() throws Exception {
-                Class<?> connect = ref.cls("net.minecraft.client.gui.screens.ConnectScreen");
-                if (connect == null) {
-                    throw new ProbeException("unsupported", "ConnectScreen not found");
-                }
-                Class<?> titleClass = ref.cls("net.minecraft.client.gui.screens.TitleScreen");
-                Object parent = titleClass == null ? game.screen(mc) : titleClass.getConstructor().newInstance();
-                // 1.17+: static startConnecting(Screen, Minecraft, ServerAddress, ServerData[, boolean[, TransferState]])
-                for (int n = 6; n >= 4; n--) {
-                    Method m = ref.method(connect, "startConnecting", n);
-                    if (m != null && java.lang.reflect.Modifier.isStatic(m.getModifiers())) {
-                        m.invoke(null, connectArgs(m.getParameterTypes(), mc, parent, host, port));
-                        return null;
-                    }
-                }
-                // 1.14 - 1.16: new ConnectScreen(Screen, Minecraft, String, int)
-                for (java.lang.reflect.Constructor<?> c : connect.getConstructors()) {
-                    Class<?>[] types = c.getParameterTypes();
-                    if (types.length == 4 && types[2] == String.class && types[3] == int.class) {
-                        Object screen = c.newInstance(connectArgs(types, mc, parent, host, port));
-                        game.setScreen(mc, screen);
-                        return null;
-                    }
-                }
-                throw new ProbeException("unsupported", "No compatible ConnectScreen entry point in this version");
+        game.onGameThread(() -> {
+            Class<?> connect = ref.cls("net.minecraft.client.gui.screens.ConnectScreen");
+            if (connect == null) {
+                throw new ProbeException("unsupported", "ConnectScreen not found");
             }
+            Class<?> titleClass = ref.cls("net.minecraft.client.gui.screens.TitleScreen");
+            Object parent = titleClass == null ? game.screen(mc) : titleClass.getConstructor().newInstance();
+            // 1.17+: static startConnecting(Screen, Minecraft, ServerAddress, ServerData[, boolean[, TransferState]])
+            for (int n = 6; n >= 4; n--) {
+                Method m = ref.method(connect, "startConnecting", n);
+                if (m != null && java.lang.reflect.Modifier.isStatic(m.getModifiers())) {
+                    m.invoke(null, connectArgs(m.getParameterTypes(), mc, parent, host, port));
+                    return null;
+                }
+            }
+            // 1.14 - 1.16: new ConnectScreen(Screen, Minecraft, String, int)
+            for (java.lang.reflect.Constructor<?> c : connect.getConstructors()) {
+                Class<?>[] types = c.getParameterTypes();
+                if (types.length == 4 && types[2] == String.class && types[3] == int.class) {
+                    game.setScreen(mc, c.newInstance(connectArgs(types, mc, parent, host, port)));
+                    return null;
+                }
+            }
+            throw new ProbeException("unsupported", "No compatible ConnectScreen entry point in this version");
         }, 10000);
     }
 

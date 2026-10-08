@@ -20,6 +20,10 @@ public final class ProbeTests {
         agentArgs();
         jsonArrays();
         extensionsBridge();
+        argsAccess();
+        opsRegistry();
+        blockPatterns();
+        NavTests.run();
         if (failures > 0) {
             System.err.println(failures + " test(s) failed");
             System.exit(1);
@@ -122,35 +126,15 @@ public final class ProbeTests {
     @SuppressWarnings("unchecked")
     static void extensionsBridge() throws Exception {
         final List<String> events = new java.util.ArrayList<String>();
-        Extensions ext = new Extensions(new Extensions.Sink() {
-            @Override
-            public void event(String name, Object data) {
-                events.add(name + "=" + data);
-            }
-        });
+        Extensions ext = new Extensions((name, data) -> events.add(name + "=" + data));
         ext.publishBridge();
         Map<String, Object> bridge = (Map<String, Object>) System.getProperties().get(Extensions.BRIDGE_COMMANDS);
-        bridge.put("mod.echo", new java.util.function.Function<Map<String, Object>, Object>() {
-            @Override
-            public Object apply(Map<String, Object> a) {
-                return a.get("x");
-            }
-        });
+        bridge.put("mod.echo", (java.util.function.Function<Map<String, Object>, Object>) a -> a.get("x"));
         Map<String, Object> meta = new java.util.HashMap<String, Object>();
         meta.put("description", "ping");
-        meta.put("handler", new java.util.concurrent.Callable<Object>() {
-            @Override
-            public Object call() {
-                return "pong";
-            }
-        });
+        meta.put("handler", (java.util.concurrent.Callable<Object>) () -> "pong");
         bridge.put("mod.ping", meta);
-        ext.register("x.add", null, null, new calcite.probe.api.Handler() {
-            @Override
-            public Object handle(Map<String, Object> a) {
-                return ((Number) a.get("a")).longValue() + 1;
-            }
-        }, "x");
+        ext.register("x.add", null, null, a -> ((Number) a.get("a")).longValue() + 1, "x");
         Map<String, Object> args = new java.util.HashMap<String, Object>();
         args.put("x", "hi");
         args.put("a", 1L);
@@ -168,6 +152,63 @@ public final class ProbeTests {
         }
         ((java.util.function.BiConsumer<String, Object>) System.getProperties().get(Extensions.BRIDGE_EMIT)).accept("mod.tick", 3);
         check(events.size() == 1 && "mod.tick=3".equals(events.get(0)), "bridge emit");
+    }
+
+    static void argsAccess() {
+        Map<String, Object> raw = new java.util.HashMap<String, Object>();
+        raw.put("x", 1.7);
+        raw.put("y", -0.5);
+        raw.put("z", 3L);
+        raw.put("name", "stone");
+        raw.put("list", java.util.Arrays.asList("a", 2, "b"));
+        raw.put("flag", "yes");
+        Args a = new Args(raw);
+        check(java.util.Arrays.equals(new int[]{1, -1, 3}, a.blockPos()), "block position is floored");
+        check("stone".equals(a.str("name")) && "d".equals(a.str("missing", "d")), "strings");
+        check(a.optNum("missing") == null && a.integer("z", 0) == 3 && a.millis("missing", 9) == 9, "numbers");
+        check(a.flag("flag", true), "non-boolean flag falls back to the default");
+        check(java.util.Arrays.asList("a", "b").equals(a.strings("list")), "string lists skip other values");
+        check(java.util.Collections.singletonList("stone").equals(a.strings("name")), "a string is a list of one");
+        expectCode("bad_request", () -> a.num("missing"));
+        expectCode("bad_request", () -> new Args(null).str("name"));
+    }
+
+    static void opsRegistry() throws Exception {
+        Ops ops = new Ops();
+        ops.add("one", a -> 1);
+        ops.action("noop", a -> { });
+        check(Integer.valueOf(1).equals(ops.get("one").run(new Args(null))), "op result");
+        check(Boolean.TRUE.equals(ops.get("noop").run(new Args(null))), "actions answer true");
+        check(ops.get("missing") == null && ops.get(null) == null, "unknown ops are null");
+        try {
+            ops.add("one", a -> 2);
+            check(false, "duplicate op rejected");
+        } catch (IllegalStateException expected) {
+            // registered twice
+        }
+    }
+
+    static void blockPatterns() {
+        check(BlockSearch.glob(World.qualify("stone")).matcher("minecraft:stone").matches(), "plain id");
+        check(!BlockSearch.glob(World.qualify("stone")).matcher("minecraft:stone_bricks").matches(), "plain id is exact");
+        java.util.regex.Pattern ores = BlockSearch.glob(World.qualify("*_ore"));
+        check(ores.matcher("minecraft:iron_ore").matches() && ores.matcher("mod:tin_ore").matches(), "glob over namespaces");
+        check(!ores.matcher("minecraft:ore_block").matches(), "glob suffix");
+        check(BlockSearch.glob("minecraft:*_log").matcher("minecraft:oak_log").matches(), "namespaced glob");
+        check(!BlockSearch.glob("minecraft:*_log").matcher("mod:oak_log").matches(), "namespaced glob keeps namespace");
+    }
+
+    interface Failing {
+        void run() throws Exception;
+    }
+
+    static void expectCode(String code, Failing f) {
+        try {
+            f.run();
+            check(false, "expected " + code);
+        } catch (Exception e) {
+            check(e instanceof calcite.probe.api.CalciteException && code.equals(((calcite.probe.api.CalciteException) e).code()), "error code " + code);
+        }
     }
 
     static void check(boolean condition, String name) {

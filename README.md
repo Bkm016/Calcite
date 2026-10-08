@@ -43,7 +43,10 @@ Calcite 用于以编程方式驱动**真实的 Minecraft Java 版客户端**。�
 - **账号**：支持离线账号，也支持微软正版账号。正版账号使用设备码登录，凭据持久保存并自动刷新。
 - **无显卡环境截图**：在 Linux 服务器上通过 Xvfb 与 Mesa 软件渲染完成截图。
 - **模组加载器**：一行参数安装 Fabric、Forge 或 NeoForge，并从本地文件、URL 或 Modrinth 加载模组（自动补全前置依赖），探针功能在模组环境中同样可用。
-- **玩家操作**：转向、移动、寻路到坐标、攻击、使用物品与方块、挖掘、切换快捷栏、丢弃物品，以及打开箱子等容器并点击槽位。操作走原版客户端逻辑，与真实玩家输入等价。
+- **玩家操作**：转向、移动、A* 寻路（绕墙、跳台阶、安全下落）、攻击、使用物品与方块、挖掘、切换快捷栏、丢弃物品，以及打开箱子等容器并点击槽位。操作走原版客户端逻辑，与真实玩家输入等价。
+- **合成与熔炉**：按配方书合成物品（2×2 用背包合成格，3×3 自动打开附近的工作台），在容器与背包之间按物品搬运，可直接给熔炉装原料和燃料。
+- **面向 Agent 的感知**：周边俯视字符地图、按 ID 或通配符搜索方块，以及受伤、死亡、背包变化、容器开关等内置游戏事件。
+- **长时操作**：寻路、挖掘、合成可在后台运行，随时查询进度或取消；受到伤害时可自动中止。
 - **按需渲染**：默认不渲染画面，截图时临时渲染。单次截图约 0.5 秒，进服后首次截图需等待区块编译，约 2–4 秒。
 - **Java 自动管理**：按游戏版本自动选择 Java（render `off` 时原本需要 Java 8 的版本改用 Java 17，HeadlessMC 3 的 LWJGL 替身不支持 Java 8）；本机缺少时从 Eclipse Adoptium 下载 Temurin，并校验 SHA-256。HeadlessMC 3 本身运行在 Java 25 上，同样按需下载。
 - **可扩展**：第三方可用 Java 编写扩展 jar，为 bot 增加自定义命令与事件；游戏内的模组也可以零依赖地注册命令。Node.js、MCP、命令行均可直接调用，见[扩展](#扩展)。
@@ -97,17 +100,23 @@ calcite launch play.example.com -V 1.21.11 -n Bot1
 | `:render on\|off` | 开启或关闭持续渲染 |
 | `:respawn` | 死亡后重生 |
 | `:look <yaw> <pitch>` / `:lookat <x> <y> <z>` | 设置视角 / 看向坐标 |
-| `:goto <x> <z>` | 直线走到指定坐标，遇到台阶自动跳跃 |
+| `:around [半径]` | 周边俯视地图、附近方块统计与实体 |
+| `:find <方块> [半径]` | 搜索方块，支持通配符，如 `*_ore` |
+| `:goto <x> <z> [y]` | 寻路走到指定坐标 |
 | `:move <按键,...> [tick]` | 按住按键若干 tick（默认 20），按键为 `forward`、`back`、`left`、`right`、`jump`、`sneak`、`sprint`、`attack`、`use` |
 | `:stop` | 停止当前移动、挖掘等持续操作 |
+| `:task` | 查看正在运行的长时操作及进度 |
 | `:attack [实体ID]` | 攻击指定实体；省略时攻击准星所指 |
 | `:use [实体ID \| x y z] [tick]` | 右键实体或方块；省略目标时使用手中物品，可指定按住时长 |
 | `:dig <x> <y> <z>` | 挖掘方块直至破坏 |
 | `:block <x> <y> <z>` / `:target` | 查看方块 / 查看准星目标 |
 | `:inv` / `:slot <0-8>` | 查看背包 / 切换快捷栏 |
+| `:craft <物品> [数量]` | 合成物品 |
 | `:container` / `:close` | 查看 / 关闭当前打开的容器 |
+| `:transfer <物品> [数量] [inventory]` | 把物品放进当前容器（加 `inventory` 则取回背包） |
 | `:click <槽位> [按键] [模式]` | 点击容器槽位，模式见下文 |
 | `:drop [all]` | 丢弃手中物品（`all` 丢弃整组） |
+| `:events [名称正则]` | 最近的游戏事件 |
 | `:ext` | 列出扩展命令 |
 | `:call <命令> [JSON 参数]` | 调用扩展命令，例如 `:call hud.tablist {"limit":5}` |
 | `:quit` | 退出并关闭客户端 |
@@ -136,7 +145,7 @@ calcite launch play.example.com -V 1.21.11 -n Bot1
 | `-r, --render <mode>` | `on-demand` | 渲染模式：`on-demand`、`always`、`off` |
 | `-l, --loader <loader>` | — | 模组加载器：`fabric`、`forge`、`neoforge`，可加 `@<版本>`，见[模组](#模组) |
 | `--mod <spec>` | — | 加载模组，可重复；需同时指定加载器 |
-| `--ext <jar>` | — | 加载探针扩展（本地 jar 或 URL），可重复；扩展事件输出到标准错误 |
+| `--ext <jar>` | — | 加载探针扩展（本地 jar 或 URL），可重复；游戏事件与扩展事件输出到标准错误 |
 | `--java <path>` | 自动选择 | 指定游戏使用的 Java |
 | `--no-java-download` | — | 禁止自动下载 Java |
 | `--memory <size>` | `2G` | 最大堆内存 |
@@ -180,19 +189,22 @@ claude mcp add calcite -- npx -y @bkm016/calcite mcp
 | `stop_client` | 停止客户端 |
 | `list_clients` | 列出当前管理的客户端 |
 | `get_state` | 获取生命周期阶段与游戏状态（界面、坐标、生命值、维度、帧率、断开原因） |
+| `surroundings` | 周边概况：俯视字符地图、脚下与所处方块、附近方块统计（含最近坐标）、附近实体、群系、时间、天气 |
+| `find_blocks` | 按 ID 或通配符（如 `*_ore`）搜索已加载区块中的方块，按距离排序 |
 | `get_entities` | 获取客户端已接收的实体，可按半径、类型、名称、UUID 过滤 |
 | `send_chat` | 发送聊天消息 |
 | `run_command` | 执行指令，并返回执行期间收到的聊天 |
 | `screenshot` | 渲染并返回 PNG 截图 |
-| `wait_for` | 等待条件成立：聊天匹配正则、实体出现或消失、进入指定阶段、收到扩展事件 |
+| `wait_for` | 等待条件成立：聊天匹配正则、实体出现或消失、进入指定阶段、收到游戏或扩展事件 |
 | `get_chat` | 获取聊天记录 |
 | `get_logs` | 获取游戏日志与 Calcite 日志，用于排查崩溃 |
 | `set_render` | 开启或关闭持续渲染 |
 | `respawn` | 死亡后重生 |
 | `look` | 设置视角，或看向指定坐标 |
-| `walk_to` | 直线走到指定坐标，遇障碍自动跳跃，返回是否到达 |
+| `walk_to` | A* 寻路走到指定坐标，返回是否到达及失败原因（`no_path`、`stuck`、`timeout`、`damaged`） |
 | `move` | 按住移动、跳跃、潜行、疾跑等按键若干 tick |
-| `stop_actions` | 停止所有持续操作并松开按键 |
+| `stop_actions` | 停止所有持续操作并松开按键，正在运行的长时操作以 `cancelled` 结束 |
+| `get_task` | 查询正在运行的长时操作的进度，以及后台任务的结果；`waitSeconds` 可等待其结束 |
 | `attack` | 攻击实体（按 ID 或准星目标） |
 | `use` | 右键：使用手中物品、与方块交互（开箱、放置）、与实体交互 |
 | `dig` | 挖掘方块直至破坏 |
@@ -200,13 +212,15 @@ claude mcp add calcite -- npx -y @bkm016/calcite mcp
 | `get_target` | 查询准星所指的方块或实体 |
 | `get_inventory` | 查询背包、快捷栏与手持物品 |
 | `select_slot` | 切换快捷栏槽位 |
-| `get_container` | 查询当前打开的容器（类型、标题、槽位物品） |
+| `craft` | 按配方书合成指定数量的物品，3×3 配方自动使用附近的工作台 |
+| `get_container` | 查询当前打开的容器（类型、标题、槽位物品；熔炉另含燃烧状态与进度） |
+| `transfer` | 在当前容器与背包之间按物品搬运，可指定数量与目标槽位 |
 | `click_slot` | 点击容器槽位，支持拾取、快速移动、数字键交换、丢弃等模式 |
 | `close_container` | 关闭当前容器 |
 | `drop_item` | 丢弃手中物品 |
 | `list_extensions` | 列出扩展与模组注册的命令（名称、说明、参数 schema）及已加载的扩展 jar |
 | `call_extension` | 调用扩展命令 |
-| `get_events` | 获取扩展事件（可按序号、名称正则过滤） |
+| `get_events` | 获取游戏事件与扩展事件（可按序号、名称正则过滤） |
 | `install_version` | 预下载指定版本，可同时安装模组加载器 |
 | `list_versions` | 列出可用版本 |
 | `account_login_start` | 开始微软账号登录，返回验证链接 |
@@ -215,6 +229,8 @@ claude mcp add calcite -- npx -y @bkm016/calcite mcp
 | `account_remove` | 删除已保存的微软账号 |
 
 仅运行一个客户端时，各工具的 `client` 参数可以省略。工具调用失败时返回 `isError` 结果，错误信息格式为 `[错误码] 描述`。
+
+`walk_to`、`dig`、`craft` 是长时操作，同一客户端同时只运行一个。默认等到结束再返回；传 `background: true` 则立即返回，之后用 `get_task` 跟进、用 `stop_actions` 取消。`walk_to` 与 `dig` 支持 `stopOnDamage`，受到伤害时以 `damaged` 中止，便于 Agent 及时应对。
 
 ## Node.js API
 
@@ -275,20 +291,27 @@ await bot.stop();
 | `setRender(enabled)` / `respawn()` | 切换持续渲染 / 重生 |
 | `chatSince(seq)` / `logsSince(opts)` | 读取聊天与日志缓冲 |
 | `look({ yaw, pitch } \| { x, y, z })` | 设置视角或看向坐标 |
-| `walkTo(x, z, { range, sprint, timeoutMs })` | 走到坐标，返回 `{ arrived, reason?, distance, x, y, z }` |
+| `walkTo(x, z, { y, range, sprint, direct, stopOnDamage, timeoutMs })` | 寻路走到坐标（`direct` 为直线行走），返回 `{ arrived, reason?, distance, x, y, z, replans? }` |
+| `task()` | 正在运行的长时操作：`{ running, name?, ticks?, ...进度 }` |
 | `move(controls, { ticks })` / `stopActions()` | 按住按键若干 tick / 停止所有持续操作 |
 | `attack(entityId?)` | 攻击实体，省略时攻击准星目标 |
 | `use({ entityId?, block?, holdTicks? })` | 右键实体、方块或使用手中物品 |
-| `dig(block, { timeoutMs })` | 挖掘方块，返回 `{ broken, block, ticks?, reason? }` |
+| `dig(block, { stopOnDamage, timeoutMs })` | 挖掘方块，返回 `{ broken, block, ticks?, reason? }` |
+| `surroundings({ radius })` | 周边概况，含以玩家为中心的俯视字符地图 `map` 与图例 `legend` |
+| `findBlocks({ blocks, radius, limit })` | 搜索方块，`blocks` 为 ID、通配符或其数组 |
+| `craft(item, { count, timeoutMs })` | 合成物品，返回 `{ item, crafted, count, reason? }` |
 | `block(pos)` / `target()` | 查询方块 / 准星目标 |
 | `inventory()` / `selectSlot(n)` | 查询背包 / 切换快捷栏 |
 | `container({ waitMs })` / `closeContainer()` | 查询 / 关闭当前容器 |
 | `click(slot, { button, mode })` | 点击容器槽位 |
+| `transfer(item, { to, count, slot })` | 在容器与背包之间搬运物品，返回 `{ item, moved, container }` |
 | `drop({ all })` | 丢弃手中物品 |
 | `extensions()` / `call(name, args)` | 列出扩展命令 / 调用扩展命令 |
-| `eventsSince({ since, name, limit })` | 读取扩展事件缓冲（最多保留 1000 条） |
+| `eventsSince({ since, name, limit })` / `lastSeq` | 读取游戏与扩展事件缓冲（最多保留 1000 条）/ 最新序号 |
 
-事件：`phase`、`state`、`chat`、`log`、`exit`、`extension`（扩展事件 `{ seq, time, name, data }`）。
+事件：`phase`、`state`、`chat`、`log`、`exit`、`event`（游戏事件与扩展事件，`{ seq, time, name, data }`）。
+
+长时操作（`walkTo`、`dig`、`craft`）同一时间只运行一个；`stopActions()` 会让正在等待的调用以 `cancelled` 错误结束。
 
 ### 玩家操作示例
 
@@ -301,11 +324,33 @@ for (const item of chest.items.filter((i) => i.slot < chest.containerSlots)) {
   await bot.click(item.slot, { mode: 'quick_move' });       // Shift+点击 取出物品
 }
 await bot.closeContainer();
+
+await bot.craft('oak_planks', { count: 8 });                // 背包合成格
+await bot.craft('wooden_pickaxe');                          // 自动打开 6 格内的工作台
+await bot.use({ block: furnacePos });                       // 打开熔炉
+await bot.container({ waitMs: 3000 });
+await bot.transfer('raw_iron', { slot: 0 });                // 原料放入输入槽
+await bot.transfer('coal');                                 // 不指定槽位时由游戏分配（燃料进燃料槽）
 ```
 
 容器槽位编号与原版一致：容器自身的槽位在前（`0` 到 `containerSlots - 1`），玩家背包在后；`item.inventorySlot` 给出对应的背包槽位。`click` 的 `mode` 可取 `pickup`（默认，`button` 0 为左键、1 为右键）、`quick_move`（Shift+点击）、`swap`（数字键，`button` 为快捷栏序号 0–8）、`clone`、`throw`、`quick_craft`、`pickup_all`；槽位 `-999` 表示点击界面外部。未打开容器时，`click` 作用于玩家自身的背包界面。
 
 操作有距离限制（6 格）：目标过远时返回 `out_of_reach` 错误，需先用 `walkTo` 靠近。
+
+### 游戏事件
+
+探针内置以下事件，与扩展事件一起通过 `event`、`eventsSince`、`waitFor({ event })` 和 MCP 的 `get_events` 获取：
+
+| 事件 | 数据 |
+| --- | --- |
+| `world.join` / `world.leave` | 进入世界时的维度与坐标 |
+| `player.respawn` / `player.dimension` | 重生或切换维度后的维度与坐标 |
+| `player.hurt` | `{ health, amount, source? }` |
+| `player.death` | `{ message }` 死亡信息 |
+| `player.food` | `{ food, previous }` |
+| `inventory.change` | `{ changes: [{ slot, item, previous }] }` |
+| `container.open` / `container.close` | 容器类型、标题、槽位数 |
+| `screen.change` | `{ screen, previous }` 界面类名 |
 
 此外还导出 `ClientManager`（多客户端管理）、`installVersion`、`startLogin`、`listAccounts`、`removeAccount` 等函数，类型定义随包发布。
 
@@ -380,7 +425,7 @@ Forge 与 NeoForge 的安装器要求与游戏版本完全一致的 Java 主版�
 
 ```js
 const bot = new Client({ version: '1.21.11', server: 'localhost', extensions: ['./calcite-hud.jar'] });
-bot.on('extension', (e) => console.log(e.name, e.data));     // 例如 hud.title { title: 'Hello', subtitle: null }
+bot.on('event', (e) => console.log(e.name, e.data));         // 例如 hud.title { title: 'Hello', subtitle: null }
 await bot.start();
 
 console.log(await bot.extensions());                         // { commands: [...], extensions: [{ jar, ids }] }
@@ -457,10 +502,12 @@ static void registerCalcite() {
 
 | 版本范围 | 支持情况 |
 | --- | --- |
-| 1.14.4 及以上 | 全部功能（状态、实体、聊天、指令、截图、玩家操作） |
+| 1.14.4 及以上 | 全部功能（状态、实体、聊天、指令、截图、玩家操作、寻路、合成、游戏事件） |
 | 1.14.4 以前 | 可以启动并进入服务器；Mojang 未发布这些版本的映射表，探针功能不可用 |
 
-已验证的版本：1.16.5、1.20.4、1.21.11、26.3。
+已验证的版本：1.16.5、1.20.1、1.20.4、1.21.1、1.21.11、26.3。
+
+通过 ViaBackwards 以低版本客户端进入高版本服务器时，服务器下发的配方会被替换为占位物品，合成不可用；其余功能不受影响。
 
 ## 数据目录与环境变量
 
@@ -510,7 +557,7 @@ static void registerCalcite() {
 
 ## 工作原理
 
-1. Calcite 解析 Mojang 版本清单，下载客户端、库与资源文件，并逐一校验哈希。
+1. Calcite 解析 Mojang 版本清单，下载客户端、库与资源文件，并逐一校验哈希。资源文件在首次成功启动时完整校验一次，之后的启动不再逐个计算哈希。
 2. 使用 [HeadlessMC](https://github.com/headlesshq/headlessmc) 3 启动游戏。每个实例拥有独立的游戏目录、HeadlessMC 配置和启动参数，并发启动互不干扰。
 3. 向游戏注入一个轻量 Java Agent（探针）。探针借助 Mojang 官方映射表（模组环境下转换为 intermediary 或 SRG 名称）定位游戏内部类，并通过本地 TCP 连接与 Calcite 交换 JSON 消息。
 4. 在 Linux 无显示环境中，Calcite 启动共享的 Xvfb，并配置 Mesa 软件渲染。Minecraft 26.x 的渲染器改用 EGL。

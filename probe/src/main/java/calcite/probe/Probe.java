@@ -36,8 +36,9 @@ import calcite.probe.api.Handler;
  *
  * <p>Protocol: one JSON object per line over TCP to 127.0.0.1:port. The probe sends a {@code hello} with the token,
  * then answers requests {@code {"id":1,"op":"state","args":{}}} with {@code {"id":1,"ok":true,"result":...}} or
- * {@code {"id":1,"ok":false,"code":"...","error":"..."}}; extension events are sent as
- * {@code {"type":"event","name":"...","data":...,"time":...}}.</p>
+ * {@code {"id":1,"ok":false,"code":"...","error":"..."}}; game and extension events are sent as
+ * {@code {"type":"event","name":"...","data":...,"time":...}}. The operations are registered by the
+ * {@link Ops.Module}s wired up in {@link #startGame}.</p>
  */
 public final class Probe {
 
@@ -48,11 +49,9 @@ public final class Probe {
     private final Instrumentation instrumentation;
     private final ExecutorService workers = Executors.newCachedThreadPool(daemon("calcite-probe-worker"));
     private final ScheduledExecutorService timer = Executors.newSingleThreadScheduledExecutor(daemon("calcite-probe-timer"));
+    private final Ops ops = new Ops();
+    private final Extensions extensions = new Extensions(this::sendEvent);
     private volatile Game game;
-    private volatile Actions actions;
-    private volatile World world;
-    private volatile Inventory inventory;
-    private volatile Session session;
     private volatile Render render;
     private volatile String initError;
     private Mappings mappings;
@@ -61,16 +60,19 @@ public final class Probe {
     private volatile ClassLoader gameLoader;
     private final Object writeLock = new Object();
     private volatile OutputStream current;
-    private final Extensions extensions = new Extensions(new Extensions.Sink() {
-        @Override
-        public void event(String name, Object data) {
-            sendEvent(name, data);
-        }
-    });
 
     private Probe(Map<String, String> args, Instrumentation instrumentation) {
         this.args = args;
         this.instrumentation = instrumentation;
+        ops.add("ping", a -> "pong");
+        ops.add("info", a -> info());
+        ops.add("ext.list", a -> {
+            Map<String, Object> list = new LinkedHashMap<String, Object>();
+            list.put("commands", extensions.list());
+            list.put("extensions", extensions.loaded());
+            return list;
+        });
+        ops.add("ext.call", a -> extensions.call(a.str("name"), new HashMap<String, Object>(a.map("args"))));
     }
 
     public static void premain(String agentArgs, Instrumentation inst) {
@@ -82,14 +84,9 @@ public final class Probe {
     }
 
     private static void start(String agentArgs, Instrumentation inst) {
-        final Probe probe = new Probe(parseArgs(agentArgs), inst);
+        Probe probe = new Probe(parseArgs(agentArgs), inst);
         probe.extensions.publishBridge();
-        Thread t = new Thread(new Runnable() {
-            @Override
-            public void run() {
-                probe.run();
-            }
-        }, "calcite-probe");
+        Thread t = new Thread(probe::run, "calcite-probe");
         t.setDaemon(true);
         t.start();
     }
@@ -139,12 +136,7 @@ public final class Probe {
     }
 
     private void run() {
-        workers.submit(new Runnable() {
-            @Override
-            public void run() {
-                initGame();
-            }
-        });
+        workers.submit(this::initGame);
         int port = Integer.parseInt(args.get("port"));
         boolean exitOnDisconnect = !"false".equals(args.get("exitOnDisconnect"));
         long lostSince = 0;
@@ -168,7 +160,7 @@ public final class Probe {
         }
     }
 
-    /** Loads mappings, waits for the Minecraft class and singleton, then applies the initial render mode. */
+    /** Loads mappings, waits for the Minecraft class and singleton, then starts the game features. */
     private void initGame() {
         try {
             List<String> candidates = nameCandidates();
@@ -211,51 +203,65 @@ public final class Probe {
             while (g.minecraft() == null) {
                 sleep(250);
             }
-            World w = new World(g, ref);
-            final Actions a = new Actions(g, ref, w);
-            final Render r = new Render(g, ref);
-            world = w;
-            actions = a;
-            inventory = new Inventory(g, ref, w);
-            session = new Session(g, ref);
-            render = r;
-            game = g;
-            timer.scheduleAtFixedRate(new Runnable() {
-                @Override
-                public void run() {
-                    try {
-                        useGameLoader();
-                        a.pump();
-                    } catch (Throwable ignored) {
-                        // keep the timer alive
-                    }
-                }
-            }, 10, 10, TimeUnit.MILLISECONDS);
-            List<String> jars = new ArrayList<String>();
-            for (int i = 1; args.containsKey("extensions." + i); i++) {
-                jars.add(args.get("extensions." + i));
-            }
-            if (!jars.isEmpty()) {
-                extensions.load(jars, gameLoader, new Base(g, ref));
-            }
-            if ("off".equals(args.get("render")) && !g.headless()) {
-                r.setRender(false);
-            }
-            timer.scheduleAtFixedRate(new Runnable() {
-                @Override
-                public void run() {
-                    try {
-                        useGameLoader();
-                        r.enforceRender();
-                    } catch (Throwable ignored) {
-                        // keep the timer alive
-                    }
-                }
-            }, 250, 250, TimeUnit.MILLISECONDS);
+            startGame(g, ref);
         } catch (Throwable t) {
             initError = t.toString();
             t.printStackTrace();
         }
+    }
+
+    /** Registers the game operations, starts the timers and loads the extensions. */
+    private void startGame(Game g, Ref ref) {
+        World world = new World(g, ref);
+        Aim aim = new Aim(g, ref, world);
+        Menus menus = new Menus(g, ref, world);
+        Controls controls = new Controls(g);
+        Status status = new Status(g, ref);
+        BlockTerrain terrain = new BlockTerrain(g, ref, world);
+        Actions actions = new Actions(g, ref, world, aim, controls);
+        Render r = new Render(g, ref);
+        Ops.Module[] modules = {
+                world, controls, status, actions, r,
+                new Session(g, ref),
+                new Inventory(g, ref, menus),
+                new Navigator(g, aim, controls, terrain, workers),
+                new BlockSearch(g, ref, world),
+                new Surroundings(g, ref, world, status, terrain),
+                new Crafting(g, ref, world, menus, aim, actions, controls),
+        };
+        for (Ops.Module m : modules) {
+            m.register(ops);
+        }
+        Watcher watcher = new Watcher(g, ref, menus, this::sendEvent);
+        render = r;
+        game = g;
+        timer.scheduleAtFixedRate(guarded(controls::pump), 10, 10, TimeUnit.MILLISECONDS);
+        List<String> jars = new ArrayList<String>();
+        for (int i = 1; args.containsKey("extensions." + i); i++) {
+            jars.add(args.get("extensions." + i));
+        }
+        if (!jars.isEmpty()) {
+            extensions.load(jars, gameLoader, new Base(g, ref));
+        }
+        if ("off".equals(args.get("render")) && !g.headless()) {
+            r.setRender(false);
+        }
+        timer.scheduleAtFixedRate(guarded(() -> {
+            r.enforceRender();
+            watcher.poll();
+        }), 250, 250, TimeUnit.MILLISECONDS);
+    }
+
+    /** A timer task that runs with the game's class loader and never kills the timer. */
+    private Runnable guarded(Runnable task) {
+        return () -> {
+            try {
+                useGameLoader();
+                task.run();
+            } catch (Throwable ignored) {
+                // keep the timer alive
+            }
+        };
     }
 
     private void useGameLoader() {
@@ -281,12 +287,7 @@ public final class Probe {
                 continue;
             }
             final String request = line;
-            workers.submit(new Runnable() {
-                @Override
-                public void run() {
-                    handle(out, request);
-                }
-            });
+            workers.submit(() -> handle(out, request));
         }
         current = null;
         socket.close();
@@ -317,21 +318,17 @@ public final class Probe {
         try {
             Map<String, Object> req = (Map<String, Object>) Json.parse(line);
             id = req.get("id");
-            String op = (String) req.get("op");
-            Map<String, Object> a = req.get("args") instanceof Map ? (Map<String, Object>) req.get("args") : new HashMap<String, Object>();
+            Object a = req.get("args");
+            Object result = dispatch((String) req.get("op"), a instanceof Map ? (Map<String, Object>) a : new HashMap<String, Object>());
             response.put("id", id);
             response.put("ok", true);
-            response.put("result", dispatch(op, a));
+            response.put("result", result);
         } catch (Throwable t) {
-            Throwable cause = t;
-            while (cause instanceof java.lang.reflect.InvocationTargetException && cause.getCause() != null) {
-                cause = cause.getCause();
-            }
+            Exception cause = ProbeException.unwrap(t);
             response.clear();
             response.put("id", id);
             response.put("ok", false);
-            response.put("code", cause instanceof Game.ProbeException ? ((Game.ProbeException) cause).code
-                    : cause instanceof CalciteException ? ((CalciteException) cause).code() : "error");
+            response.put("code", cause instanceof CalciteException ? ((CalciteException) cause).code() : "error");
             response.put("error", cause.getMessage() == null ? cause.toString() : cause.getMessage());
         }
         try {
@@ -341,128 +338,36 @@ public final class Probe {
         }
     }
 
-    @SuppressWarnings("unchecked")
-    private Object dispatch(String op, Map<String, Object> a) throws Exception {
-        if ("ping".equals(op)) {
-            return "pong";
+    private Object dispatch(String name, Map<String, Object> a) throws Exception {
+        Ops.Op op = ops.get(name);
+        if (op != null) {
+            return op.run(new Args(a));
         }
-        if ("info".equals(op)) {
-            Map<String, Object> info = new LinkedHashMap<String, Object>();
-            info.put("protocol", PROTOCOL);
-            info.put("java", System.getProperty("java.version"));
-            info.put("ready", game != null);
-            info.put("initError", initError);
-            info.put("mappedClasses", mappings == null ? 0 : mappings.size());
-            info.put("obfuscated", mappings != null && !mappings.isIdentity());
-            info.put("names", names);
-            if (game != null) {
-                info.put("headless", game.headless());
-                info.put("renderToggle", render.renderToggleSupported());
-            }
-            info.put("extensions", extensions.loaded());
-            return info;
-        }
-        if ("ext.list".equals(op)) {
-            Map<String, Object> list = new LinkedHashMap<String, Object>();
-            list.put("commands", extensions.list());
-            list.put("extensions", extensions.loaded());
-            return list;
-        }
-        if ("ext.call".equals(op)) {
-            Object callArgs = a.get("args");
-            return extensions.call(str(a, "name"), callArgs instanceof Map ? (Map<String, Object>) callArgs : new HashMap<String, Object>());
-        }
-        Game g = game;
-        if (g == null) {
+        if (game == null) {
+            // game operations are registered once the game is up
             if (initError != null) {
-                throw new Game.ProbeException("init_failed", initError);
+                throw new ProbeException("init_failed", initError);
             }
-            throw new Game.ProbeException("not_ready", "Minecraft is still starting");
+            throw new ProbeException("not_ready", "Minecraft is still starting");
         }
-        if ("state".equals(op)) {
-            return g.state();
+        throw new ProbeException("unknown_op", "Unknown operation: " + name);
+    }
+
+    private Map<String, Object> info() {
+        Map<String, Object> info = new LinkedHashMap<String, Object>();
+        info.put("protocol", PROTOCOL);
+        info.put("java", System.getProperty("java.version"));
+        info.put("ready", game != null);
+        info.put("initError", initError);
+        info.put("mappedClasses", mappings == null ? 0 : mappings.size());
+        info.put("obfuscated", mappings != null && !mappings.isIdentity());
+        info.put("names", names);
+        if (game != null) {
+            info.put("headless", game.headless());
+            info.put("renderToggle", render.renderToggleSupported());
         }
-        if ("entities".equals(op)) {
-            return g.entities(num(a.get("radius"), 0), (int) num(a.get("limit"), 0), Boolean.TRUE.equals(a.get("includeSelf")));
-        }
-        if ("chat".equals(op)) {
-            session.chat(str(a, "message"));
-            return true;
-        }
-        if ("command".equals(op)) {
-            session.command(str(a, "command"));
-            return true;
-        }
-        if ("render".equals(op)) {
-            if (g.headless()) {
-                throw new Game.ProbeException("headless", "The client runs without a renderer (headless)");
-            }
-            render.setRender(Boolean.TRUE.equals(a.get("enabled")));
-            return true;
-        }
-        if ("screenshot".equals(op)) {
-            return render.screenshot(str(a, "name"), (int) num(a.get("settleFrames"), 3), (long) num(a.get("timeoutMs"), 20000));
-        }
-        if ("connect".equals(op)) {
-            session.connect(str(a, "host"), (int) num(a.get("port"), 25565));
-            return true;
-        }
-        if ("respawn".equals(op)) {
-            session.respawn();
-            return true;
-        }
-        Actions act = actions;
-        if ("look".equals(op)) {
-            double[] at = a.containsKey("x") ? new double[]{num(a.get("x"), 0), num(a.get("y"), 0), num(a.get("z"), 0)} : null;
-            return act.look(optNum(a.get("yaw")), optNum(a.get("pitch")), at);
-        }
-        if ("move".equals(op)) {
-            return act.move(a, (int) num(a.get("ticks"), 0));
-        }
-        if ("stop".equals(op)) {
-            act.stop();
-            return true;
-        }
-        if ("walk_to".equals(op)) {
-            return act.walkTo(num(a.get("x"), 0), num(a.get("z"), 0), num(a.get("range"), 0.5),
-                    !Boolean.FALSE.equals(a.get("sprint")), (long) num(a.get("timeoutMs"), 60000));
-        }
-        if ("attack".equals(op)) {
-            return act.attack(optInt(a.get("entityId")));
-        }
-        if ("use".equals(op)) {
-            return act.use(optInt(a.get("entityId")), a.containsKey("x") ? pos(a) : null, (String) a.get("face"), (int) num(a.get("holdTicks"), 0));
-        }
-        if ("dig".equals(op)) {
-            return act.dig(pos(a), (String) a.get("face"), (long) num(a.get("timeoutMs"), 30000));
-        }
-        if ("block".equals(op)) {
-            return world.block(pos(a));
-        }
-        if ("target".equals(op)) {
-            return world.target();
-        }
-        if ("inventory".equals(op)) {
-            return inventory.inventory();
-        }
-        if ("select_slot".equals(op)) {
-            return inventory.selectSlot((int) num(a.get("slot"), -1));
-        }
-        if ("container".equals(op)) {
-            return inventory.container((long) num(a.get("waitMs"), 0));
-        }
-        if ("click".equals(op)) {
-            Object mode = a.get("mode");
-            return inventory.click((int) num(a.get("slot"), -1), (int) num(a.get("button"), 0), mode instanceof String ? (String) mode : "pickup");
-        }
-        if ("close_container".equals(op)) {
-            inventory.closeContainer();
-            return true;
-        }
-        if ("drop".equals(op)) {
-            return inventory.drop(Boolean.TRUE.equals(a.get("all")));
-        }
-        throw new Game.ProbeException("unknown_op", "Unknown operation: " + op);
+        info.put("extensions", extensions.loaded());
+        return info;
     }
 
     /** What extensions get from the probe (unscoped; {@link Extensions} adds the id prefix). */
@@ -524,35 +429,6 @@ public final class Probe {
         public void log(String message) {
             System.out.println("[calcite] " + message);
         }
-    }
-
-    private static String str(Map<String, Object> a, String key) {
-        Object v = a.get(key);
-        if (!(v instanceof String)) {
-            throw new Game.ProbeException("bad_request", "Missing string argument: " + key);
-        }
-        return (String) v;
-    }
-
-    private static int[] pos(Map<String, Object> a) {
-        for (String k : new String[]{"x", "y", "z"}) {
-            if (!(a.get(k) instanceof Number)) {
-                throw new Game.ProbeException("bad_request", "Missing block coordinate: " + k);
-            }
-        }
-        return new int[]{(int) Math.floor(num(a.get("x"), 0)), (int) Math.floor(num(a.get("y"), 0)), (int) Math.floor(num(a.get("z"), 0))};
-    }
-
-    private static Double optNum(Object v) {
-        return v instanceof Number ? ((Number) v).doubleValue() : null;
-    }
-
-    private static Integer optInt(Object v) {
-        return v instanceof Number ? ((Number) v).intValue() : null;
-    }
-
-    private static double num(Object v, double def) {
-        return v instanceof Number ? ((Number) v).doubleValue() : def;
     }
 
     private void send(OutputStream out, Object message) throws Exception {

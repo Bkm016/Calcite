@@ -12,8 +12,6 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
-import calcite.probe.Game.ProbeException;
-
 /**
  * Reflection by official (Mojang) names, resolved through {@link Mappings}.
  * Lookups walk the runtime class hierarchy, so members declared in super classes/interfaces are found.
@@ -293,9 +291,15 @@ public final class Ref {
         try {
             return m.invoke(target);
         } catch (java.lang.reflect.InvocationTargetException e) {
-            Throwable cause = e.getCause();
-            throw cause instanceof Exception ? (Exception) cause : new RuntimeException(cause);
+            throw ProbeException.unwrap(e);
         }
+    }
+
+    /** Official name of an enum constant ("BLOCK" for HitResult.Type.BLOCK even when obfuscated). */
+    public String enumName(Object constant) {
+        String runtime = ((Enum<?>) constant).name();
+        Mappings.ClassEntry entry = mappings.isIdentity() ? null : mappings.byRuntime(constant.getClass().getName());
+        return entry == null ? runtime : entry.namedField(runtime);
     }
 
     /** {@code new named(args)}, picking the constructor whose parameters accept the arguments. */

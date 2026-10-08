@@ -2,16 +2,13 @@ package calcite.probe;
 
 import java.io.File;
 import java.lang.reflect.Method;
-import java.util.concurrent.Callable;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
 
-import calcite.probe.Game.ProbeException;
-
 /** World rendering on/off and screenshots. */
-final class Render {
+final class Render implements Ops.Module {
 
     private final Game game;
     private final Ref ref;
@@ -23,14 +20,25 @@ final class Render {
         this.ref = ref;
     }
 
+    @Override
+    public void register(Ops ops) {
+        ops.action("render", a -> {
+            if (game.headless()) {
+                throw new ProbeException("headless", "The client runs without a renderer (headless)");
+            }
+            setRender(a.flag("enabled", false));
+        });
+        ops.add("screenshot", a -> screenshot(a.str("name"), a.integer("settleFrames", 3), a.millis("timeoutMs", 20000)));
+    }
+
     /** Sets whether the world is rendered; enforced continuously by {@link #enforceRender()}. */
-    public void setRender(boolean render) {
+    void setRender(boolean render) {
         wantNoRender = !render;
         enforceRender();
     }
 
     /** Re-applies the desired render state (opening any screen resets Minecraft.noRender). */
-    public void enforceRender() {
+    void enforceRender() {
         final Boolean want = wantNoRender;
         final Object mc = game.minecraft();
         if (want == null || mc == null) {
@@ -40,24 +48,21 @@ final class Render {
         if (f == null) {
             return;
         }
-        ((Executor) mc).execute(new Runnable() {
-            @Override
-            public void run() {
-                try {
-                    // Overlays (the resource-loading screen) only advance while being rendered; suppressing
-                    // rendering then would stall startup or a resource reload forever.
-                    boolean effective = want && game.optGet(mc, "overlay") == null;
-                    if (f.getBoolean(mc) != effective) {
-                        f.setBoolean(mc, effective);
-                    }
-                } catch (Throwable ignored) {
-                    // best effort
+        ((Executor) mc).execute(() -> {
+            try {
+                // Overlays (the resource-loading screen) only advance while being rendered; suppressing
+                // rendering then would stall startup or a resource reload forever.
+                boolean effective = want && game.optGet(mc, "overlay") == null;
+                if (f.getBoolean(mc) != effective) {
+                    f.setBoolean(mc, effective);
                 }
+            } catch (Throwable ignored) {
+                // best effort
             }
         });
     }
 
-    public boolean renderToggleSupported() {
+    boolean renderToggleSupported() {
         Object mc = game.minecraft();
         return mc != null && ref.field(mc.getClass(), "noRender") != null;
     }
@@ -66,7 +71,7 @@ final class Render {
      * Renders a few frames (if rendering is normally off) and saves a screenshot through the game's own
      * screenshot code. Returns the absolute path of the PNG.
      */
-    public String screenshot(final String fileName, int settleFrames, long timeoutMs) throws Exception {
+    String screenshot(final String fileName, int settleFrames, long timeoutMs) throws Exception {
         if (game.headless()) {
             throw new ProbeException("headless", "The client runs without a renderer (headless); screenshots need a display");
         }
@@ -83,17 +88,9 @@ final class Render {
             final File dir = new File(gameDir, "screenshots");
             final long started = System.currentTimeMillis();
             final CompletableFuture<Object> done = new CompletableFuture<Object>();
-            game.onGameThread(new Callable<Object>() {
-                @Override
-                public Object call() throws Exception {
-                    grab(mc, gameDir, fileName, new Consumer<Object>() {
-                        @Override
-                        public void accept(Object message) {
-                            done.complete(message);
-                        }
-                    });
-                    return null;
-                }
+            game.onGameThread(() -> {
+                grab(mc, gameDir, fileName, done::complete);
+                return null;
             }, timeoutMs);
             Object message = done.get(timeoutMs, TimeUnit.MILLISECONDS);
             File expected = new File(dir, fileName);

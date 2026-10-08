@@ -33,11 +33,6 @@ public final class Extensions {
     public static final String BRIDGE_COMMANDS = "calcite.commands";
     public static final String BRIDGE_EMIT = "calcite.emit";
 
-    /** Sends an event to the controller (set by the probe). */
-    public interface Sink {
-        void event(String name, Object data);
-    }
-
     private static final class Command {
         final String name;
         final String description;
@@ -57,21 +52,16 @@ public final class Extensions {
     private final Map<String, Command> commands = new ConcurrentHashMap<String, Command>();
     private final Map<String, Object> bridge = new ConcurrentHashMap<String, Object>();
     private final List<Map<String, Object>> loaded = new ArrayList<Map<String, Object>>();
-    private final Sink sink;
+    private final EventSink sink;
 
-    public Extensions(Sink sink) {
+    public Extensions(EventSink sink) {
         this.sink = sink;
     }
 
     /** Publishes the mod bridge through system properties (before mods load, so they can find it). */
     public void publishBridge() {
         System.getProperties().put(BRIDGE_COMMANDS, bridge);
-        System.getProperties().put(BRIDGE_EMIT, new BiConsumer<String, Object>() {
-            @Override
-            public void accept(String name, Object data) {
-                sink.event(name, data);
-            }
-        });
+        System.getProperties().put(BRIDGE_EMIT, (BiConsumer<String, Object>) sink::event);
     }
 
     /** Loads the extension jars with a loader that sees the probe API and the game classes. */
@@ -148,12 +138,7 @@ public final class Extensions {
             Map<?, ?> meta = v instanceof Map ? (Map<?, ?>) v : null;
             out.add(describe(e.getKey(), meta == null ? null : str(meta.get("description")), meta == null ? null : meta.get("schema"), "mod"));
         }
-        java.util.Collections.sort(out, new java.util.Comparator<Map<String, Object>>() {
-            @Override
-            public int compare(Map<String, Object> a, Map<String, Object> b) {
-                return String.valueOf(a.get("name")).compareTo(String.valueOf(b.get("name")));
-            }
-        });
+        out.sort((a, b) -> String.valueOf(a.get("name")).compareTo(String.valueOf(b.get("name"))));
         return out;
     }
 

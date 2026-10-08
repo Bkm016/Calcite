@@ -45,6 +45,16 @@ public final class Mappings {
             return fields.get(name);
         }
 
+        /** Official name of the field whose runtime name is {@code runtimeName} (itself when unknown). */
+        public String namedField(String runtimeName) {
+            for (Map.Entry<String, String> e : fields.entrySet()) {
+                if (e.getValue().equals(runtimeName)) {
+                    return e.getKey();
+                }
+            }
+            return runtimeName;
+        }
+
         public List<MethodEntry> methods(String name) {
             List<MethodEntry> list = methods.get(name);
             return list == null ? Collections.<MethodEntry>emptyList() : list;

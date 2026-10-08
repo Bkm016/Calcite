@@ -1,24 +1,27 @@
 package calcite.probe;
 
 import java.lang.reflect.Method;
-import java.util.ArrayList;
 import java.util.LinkedHashMap;
-import java.util.List;
 import java.util.Map;
-import java.util.UUID;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * Version-adaptive access to the running Minecraft client.
- * Every operation tries the API shapes of several game versions (1.14.4 → 26.x) and reports a clear
- * error when none is available.
+ * Helpers try the API shapes of several game versions (1.14.4 → 26.x) and report a clear error when none fits.
  */
 public final class Game {
 
     private static final String MINECRAFT = "net.minecraft.client.Minecraft";
+    static final long TIMEOUT_MS = 5000;
+
+    /** Work that needs the player; runs on the game thread. */
+    interface PlayerTask<T> {
+        T run(Object mc, Object player) throws Exception;
+    }
 
     private final Ref ref;
     private final boolean headless;
@@ -66,175 +69,73 @@ public final class Game {
         return mc;
     }
 
-    /** Runs {@code task} on the render thread and waits for the result. */
+    /** Runs {@code task} on the render thread and waits for the result (directly when already on it). */
     public <T> T onGameThread(final Callable<T> task, long timeoutMs) throws Exception {
         Object mc = requireMinecraft();
+        if (Boolean.TRUE.equals(optCall(mc, "isSameThread"))) {
+            return task.call();
+        }
         final CompletableFuture<T> future = new CompletableFuture<T>();
-        ((Executor) mc).execute(new Runnable() {
-            @Override
-            public void run() {
-                try {
-                    future.complete(task.call());
-                } catch (Throwable t) {
-                    future.completeExceptionally(t);
-                }
+        ((Executor) mc).execute(() -> {
+            try {
+                future.complete(task.call());
+            } catch (Throwable t) {
+                future.completeExceptionally(t);
             }
         });
         try {
             return future.get(timeoutMs, TimeUnit.MILLISECONDS);
         } catch (java.util.concurrent.ExecutionException e) {
-            Throwable cause = e.getCause();
-            if (cause instanceof Exception) {
-                throw (Exception) cause;
-            }
-            throw new RuntimeException(cause);
+            throw ProbeException.unwrap(e);
         }
     }
 
-    // ---------------------------------------------------------------- state
-
-    public Map<String, Object> state() throws Exception {
-        final Object mc = minecraft();
-        Map<String, Object> out = new LinkedHashMap<String, Object>();
-        out.put("ready", mc != null);
-        out.put("headless", headless);
-        if (mc == null) {
-            out.put("inGame", false);
-            return out;
+    /**
+     * Queues {@code task} on the game thread without waiting, unless the task queued earlier with the same
+     * {@code busy} flag has not run yet. For polling from the probe timer, which must never block.
+     */
+    void runLater(final AtomicBoolean busy, final Runnable task) {
+        Object mc = minecraft();
+        if (mc == null || !busy.compareAndSet(false, true)) {
+            return;
         }
-        return onGameThread(new Callable<Map<String, Object>>() {
-            @Override
-            public Map<String, Object> call() throws Exception {
-                Map<String, Object> s = new LinkedHashMap<String, Object>();
-                s.put("ready", true);
-                s.put("headless", headless);
-                Object level = optGet(mc, "level");
-                Object player = optGet(mc, "player");
-                s.put("inGame", level != null && player != null);
-                s.put("loading", optGet(mc, "overlay") != null);
-                Object screen = screen(mc);
-                s.put("screen", screen == null ? null : ref.simpleNamed(screen.getClass()));
-                if (screen != null && "DisconnectedScreen".equals(ref.simpleNamed(screen.getClass()))) {
-                    s.put("disconnectReason", disconnectReason(screen));
+        try {
+            ((Executor) mc).execute(() -> {
+                try {
+                    task.run();
+                } finally {
+                    busy.set(false);
                 }
-                Object fps = optGet(mc, "fps");
-                if (fps instanceof Number) {
-                    s.put("fps", ((Number) fps).intValue());
-                }
-                Object noRender = optGet(mc, "noRender");
-                if (noRender instanceof Boolean) {
-                    s.put("noRender", noRender);
-                }
-                if (player != null) {
-                    Map<String, Object> p = new LinkedHashMap<String, Object>();
-                    p.put("id", optCall(player, "getId"));
-                    Object uuid = optCall(player, "getUUID");
-                    p.put("uuid", uuid == null ? null : uuid.toString());
-                    p.put("name", text(optCall(player, "getName")));
-                    double[] pos = position(player);
-                    if (pos != null) {
-                        p.put("x", pos[0]);
-                        p.put("y", pos[1]);
-                        p.put("z", pos[2]);
-                    }
-                    p.put("yaw", rotation(player, "getYRot", "yRot"));
-                    p.put("pitch", rotation(player, "getXRot", "xRot"));
-                    Object health = optCall(player, "getHealth");
-                    if (health instanceof Number) {
-                        p.put("health", ((Number) health).doubleValue());
-                    }
-                    Object food = optCall(optCall(player, "getFoodData"), "getFoodLevel");
-                    if (food instanceof Number) {
-                        p.put("food", ((Number) food).intValue());
-                    }
-                    Object mode = optCall(optCall(optGet(mc, "gameMode"), "getPlayerMode"), "getName");
-                    if (mode != null) {
-                        p.put("gameMode", mode.toString());
-                    }
-                    p.put("dimension", dimension(level));
-                    s.put("player", p);
-                }
-                return s;
-            }
-        }, 5000);
+            });
+        } catch (RuntimeException e) {
+            busy.set(false);
+        }
     }
 
-    private String disconnectReason(Object screen) {
-        Object details = optGet(screen, "details");
-        if (details != null) {
-            Object reason = optCall(details, "reason");
-            if (reason != null) {
-                return text(reason);
-            }
-        }
-        Object reason = optGet(screen, "reason");
-        return reason == null ? null : text(reason);
+    /** Runs {@code task} with the local player on the game thread; fails with {@code not_in_game} outside a world. */
+    <T> T withPlayer(final PlayerTask<T> task) throws Exception {
+        final Object mc = requireMinecraft();
+        return onGameThread(() -> task.run(mc, requirePlayer(mc)), TIMEOUT_MS);
     }
 
-    private String dimension(Object level) {
-        if (level == null) {
-            return null;
+    Object requirePlayer(Object mc) {
+        Object player = optGet(mc, "player");
+        if (player == null) {
+            throw new ProbeException("not_in_game", "The client is not in a world");
         }
-        Object key = optCall(level, "dimension");
-        if (key == null) {
-            return null;
-        }
-        String s = key.toString();
-        // ResourceKey[minecraft:dimension / minecraft:overworld]
-        int slash = s.lastIndexOf(" / ");
-        if (slash >= 0 && s.endsWith("]")) {
-            return s.substring(slash + 3, s.length() - 1);
-        }
-        return s;
+        return player;
     }
 
     // ---------------------------------------------------------------- entities
 
-    public List<Map<String, Object>> entities(final double radius, final int limit, final boolean includeSelf) throws Exception {
-        final Object mc = requireMinecraft();
-        return onGameThread(new Callable<List<Map<String, Object>>>() {
-            @Override
-            public List<Map<String, Object>> call() throws Exception {
-                List<Map<String, Object>> out = new ArrayList<Map<String, Object>>();
-                Object level = optGet(mc, "level");
-                Object player = optGet(mc, "player");
-                if (level == null) {
-                    return out;
-                }
-                Object iterable = optCall(level, "entitiesForRendering");
-                if (!(iterable instanceof Iterable)) {
-                    throw new ProbeException("unsupported", "ClientLevel#entitiesForRendering is not available in this version");
-                }
-                double[] origin = player == null ? null : position(player);
-                Object selfId = player == null ? null : optCall(player, "getId");
-                for (Object e : (Iterable<?>) iterable) {
-                    if (limit > 0 && out.size() >= limit) {
-                        break;
-                    }
-                    Object id = optCall(e, "getId");
-                    if (!includeSelf && selfId != null && selfId.equals(id)) {
-                        continue;
-                    }
-                    double[] pos = position(e);
-                    if (radius > 0 && origin != null && pos != null) {
-                        double dx = pos[0] - origin[0], dy = pos[1] - origin[1], dz = pos[2] - origin[2];
-                        if (dx * dx + dy * dy + dz * dz > radius * radius) {
-                            continue;
-                        }
-                    }
-                    out.add(describe(e, pos));
-                }
-                return out;
-            }
-        }, 10000);
-    }
-
-    Map<String, Object> describe(Object e, double[] pos) {
+    /** id, type, position, rotation and name of an entity. */
+    Map<String, Object> describe(Object e) {
         Map<String, Object> m = new LinkedHashMap<String, Object>();
         m.put("id", optCall(e, "getId"));
         Object uuid = optCall(e, "getUUID");
-        m.put("uuid", uuid instanceof UUID ? uuid.toString() : uuid == null ? null : uuid.toString());
+        m.put("uuid", uuid == null ? null : uuid.toString());
         m.put("type", entityType(e));
+        double[] pos = position(e);
         if (pos != null) {
             m.put("x", pos[0]);
             m.put("y", pos[1]);
@@ -263,23 +164,22 @@ public final class Game {
         return m;
     }
 
-    private String entityType(Object e) {
+    /** Registry id of an entity's type, e.g. "minecraft:zombie". */
+    String entityType(Object e) {
         Object type = optCall(e, "getType");
         if (type == null) {
             return null;
         }
         Class<?> typeClass = ref.cls("net.minecraft.world.entity.EntityType");
-        if (typeClass != null) {
-            Method getKey = ref.method(typeClass, "getKey", 1);
-            if (getKey != null) {
-                try {
-                    Object key = getKey.invoke(null, type);
-                    if (key != null) {
-                        return key.toString();
-                    }
-                } catch (Throwable ignored) {
-                    // fall through
+        Method getKey = typeClass == null ? null : ref.method(typeClass, "getKey", 1);
+        if (getKey != null) {
+            try {
+                Object key = getKey.invoke(null, type);
+                if (key != null) {
+                    return key.toString();
                 }
+            } catch (Throwable ignored) {
+                // fall through
             }
         }
         Object shortName = optCall(type, "toShortString");
@@ -288,22 +188,15 @@ public final class Game {
 
     /** Entity position as {x, y, z}; supports getX() (1.15+), position()/Vec3 and legacy public fields. */
     double[] position(Object e) {
-        Object x = optCall(e, "getX");
-        Object y = optCall(e, "getY");
-        Object z = optCall(e, "getZ");
-        if (x instanceof Number && y instanceof Number && z instanceof Number) {
-            return new double[]{((Number) x).doubleValue(), ((Number) y).doubleValue(), ((Number) z).doubleValue()};
+        double[] p = vec(optCall(e, "getX"), optCall(e, "getY"), optCall(e, "getZ"));
+        if (p == null) {
+            Object v = optCall(e, "position");
+            p = v == null ? null : vec(optGet(v, "x"), optGet(v, "y"), optGet(v, "z"));
         }
-        Object vec = optCall(e, "position");
-        if (vec != null) {
-            Object vx = optGet(vec, "x"), vy = optGet(vec, "y"), vz = optGet(vec, "z");
-            if (vx instanceof Number && vy instanceof Number && vz instanceof Number) {
-                return new double[]{((Number) vx).doubleValue(), ((Number) vy).doubleValue(), ((Number) vz).doubleValue()};
-            }
-        }
-        x = optGet(e, "x");
-        y = optGet(e, "y");
-        z = optGet(e, "z");
+        return p != null ? p : vec(optGet(e, "x"), optGet(e, "y"), optGet(e, "z"));
+    }
+
+    private static double[] vec(Object x, Object y, Object z) {
         if (x instanceof Number && y instanceof Number && z instanceof Number) {
             return new double[]{((Number) x).doubleValue(), ((Number) y).doubleValue(), ((Number) z).doubleValue()};
         }
@@ -318,15 +211,43 @@ public final class Game {
         return v instanceof Number ? ((Number) v).doubleValue() : null;
     }
 
-    Object requirePlayer(Object mc) {
-        Object player = optGet(mc, "player");
-        if (player == null) {
-            throw new ProbeException("not_in_game", "The client is not in a world");
-        }
-        return player;
+    /** Health of a living entity, or -1 when unknown. */
+    double health(Object living) {
+        Object v = optCall(living, "getHealth");
+        return v instanceof Number ? ((Number) v).doubleValue() : -1;
     }
 
-    // ---------------------------------------------------------------- helpers
+    boolean onGround(Object entity) {
+        Object v = optCall(entity, "onGround");
+        if (v == null) {
+            v = optCall(entity, "isOnGround");
+        }
+        if (v == null) {
+            v = optGet(entity, "onGround");
+        }
+        return Boolean.TRUE.equals(v);
+    }
+
+    boolean inFluid(Object entity) {
+        return Boolean.TRUE.equals(optCall(entity, "isInWater")) || Boolean.TRUE.equals(optCall(entity, "isInLava"));
+    }
+
+    /** Dimension id of a level, e.g. "minecraft:overworld". */
+    String dimension(Object level) {
+        return level == null ? null : keyLocation(optCall(level, "dimension"));
+    }
+
+    /** "minecraft:overworld" from a ResourceKey, whose toString is "ResourceKey[minecraft:dimension / minecraft:overworld]". */
+    static String keyLocation(Object key) {
+        if (key == null) {
+            return null;
+        }
+        String s = key.toString();
+        int slash = s.lastIndexOf(" / ");
+        return slash >= 0 && s.endsWith("]") ? s.substring(slash + 3, s.length() - 1) : s;
+    }
+
+    // ---------------------------------------------------------------- screens
 
     /** The open screen; 26.x keeps it in Minecraft.gui. */
     Object screen(Object mc) {
@@ -351,18 +272,18 @@ public final class Game {
         m.invoke(target, screen);
     }
 
+    // ---------------------------------------------------------------- reflection shortcuts
+
     /** Component → plain text (getString), tolerating plain strings and nulls. */
     String text(Object component) {
-        if (component == null) {
-            return null;
-        }
-        if (component instanceof String) {
+        if (component == null || component instanceof String) {
             return (String) component;
         }
         Object s = optCall(component, "getString");
         return s != null ? s.toString() : component.toString();
     }
 
+    /** Field value by official name, or null when missing. */
     Object optGet(Object target, String field) {
         if (target == null) {
             return null;
@@ -375,6 +296,7 @@ public final class Game {
         }
     }
 
+    /** Result of a no-argument method by official name, or null when missing or failing. */
     Object optCall(Object target, String method) {
         if (target == null) {
             return null;
@@ -407,19 +329,8 @@ public final class Game {
         try {
             m.invoke(target, args);
         } catch (java.lang.reflect.InvocationTargetException e) {
-            Throwable cause = e.getCause();
-            throw cause instanceof Exception ? (Exception) cause : new RuntimeException(cause);
+            throw ProbeException.unwrap(e);
         }
         return true;
-    }
-
-    /** Signals an error with a stable machine-readable code. */
-    public static final class ProbeException extends RuntimeException {
-        public final String code;
-
-        public ProbeException(String code, String message) {
-            super(message);
-            this.code = code;
-        }
     }
 }

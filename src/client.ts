@@ -6,15 +6,18 @@ import {
   type BlockFace,
   type BlockInfo,
   type BlockPosition,
+  type BlockSearch,
+  type BlockSearchResult,
   type ChatLine,
   type ClickMode,
   type ContainerInfo,
+  type CraftResult,
   type DigResult,
   type EntityInfo,
   type EntityQuery,
   type ExtensionCommand,
-  type ExtensionEvent,
   type ExtensionInfo,
+  type GameEvent,
   type GameState,
   type HitTarget,
   type InventoryInfo,
@@ -22,6 +25,10 @@ import {
   type LogLine,
   type MoveControls,
   type Phase,
+  type Surroundings,
+  type TaskStatus,
+  type TransferResult,
+  type WalkOptions,
   type WalkResult,
 } from './types.js';
 
@@ -31,8 +38,11 @@ export { installVersion, type InstallOptions } from './install.js';
 /**
  * One Minecraft client controlled by Calcite.
  *
- * Events: 'phase' (Phase), 'log' (LogLine), 'chat' (ChatLine), 'state' (GameState), 'extension' (ExtensionEvent),
+ * Events: 'phase' (Phase), 'log' (LogLine), 'chat' (ChatLine), 'state' (GameState), 'event' (GameEvent),
  * 'exit' (code).
+ *
+ * Long actions ({@link walkTo}, {@link dig}, {@link craft}) run one at a time: starting another, or
+ * {@link stopActions}, cancels the running one, whose promise then rejects with code "cancelled".
  */
 export class Client extends ClientCore {
   async state(): Promise<GameState> {
@@ -88,19 +98,24 @@ export class Client extends ClientCore {
     return this.requireProbe().request('move', { ...controls, ticks: opts.ticks ?? 0 });
   }
 
-  /** Releases every control and cancels a running walkTo/dig/held use. */
+  /** Releases every control and cancels the running action (walkTo, dig, craft, held use). */
   async stopActions(): Promise<void> {
     await this.requireProbe().request('stop');
   }
 
+  /** The running action and its progress. */
+  async task(): Promise<TaskStatus> {
+    return this.requireProbe().request('task');
+  }
+
   /**
-   * Walks in a straight line to (x, z), jumping over single blocks and swimming. Resolves when within
-   * {@code range} blocks, or with {@code arrived: false} when stuck (no progress for 3 s) or timed out.
-   * There is no path finding: route around obstacles with intermediate points.
+   * Walks to (x, z), finding a path through the loaded terrain: around walls, up steps and slabs, down drops
+   * of up to three blocks, across water, never into lava or fire. The path is planned again when the player
+   * is pushed off it. Resolves when within {@code range}, or with {@code arrived: false} and a reason.
    */
-  async walkTo(x: number, z: number, opts: { range?: number; sprint?: boolean; timeoutMs?: number } = {}): Promise<WalkResult> {
-    const timeoutMs = opts.timeoutMs ?? 60_000;
-    return this.requireProbe().request('walk_to', { x, z, range: opts.range ?? 0.5, sprint: opts.sprint ?? true, timeoutMs }, timeoutMs + 15_000);
+  async walkTo(x: number, z: number, opts: WalkOptions = {}): Promise<WalkResult> {
+    const { timeoutMs = 60_000, ...rest } = opts;
+    return this.requireProbe().request('walk_to', { x, z, ...rest, timeoutMs }, timeoutMs + 15_000);
   }
 
   /** Left click: attacks the entity (facing it first) or whatever the crosshair points at. */
@@ -119,9 +134,29 @@ export class Client extends ClientCore {
   }
 
   /** Mines a block like a player (holding left click, taking the real break time). */
-  async dig(block: BlockPosition & { face?: BlockFace }, opts: { timeoutMs?: number } = {}): Promise<DigResult> {
+  async dig(block: BlockPosition & { face?: BlockFace }, opts: { stopOnDamage?: boolean; timeoutMs?: number } = {}): Promise<DigResult> {
+    const { timeoutMs = 30_000, stopOnDamage } = opts;
+    return this.requireProbe().request('dig', { ...block, stopOnDamage, timeoutMs }, timeoutMs + 15_000);
+  }
+
+  /** Loaded blocks matching ids or patterns around the player, nearest first. */
+  async findBlocks(search: BlockSearch): Promise<BlockSearchResult> {
+    return this.requireProbe().request('find_blocks', { ...search }, 20_000);
+  }
+
+  /** A top-down terrain map, nearby blocks and entities, biome, time and weather. */
+  async surroundings(opts: { radius?: number } = {}): Promise<Surroundings> {
+    return this.requireProbe().request('surroundings', { ...opts }, 20_000);
+  }
+
+  /**
+   * Crafts at least {@code count} of an item through the recipe book, from ingredients in the inventory (a recipe
+   * making four planks may overshoot). Recipes larger than 2×2 need a crafting table: an open one, or one within
+   * reach that is opened and closed again. Only recipes the player has unlocked are known.
+   */
+  async craft(item: string, opts: { count?: number; timeoutMs?: number } = {}): Promise<CraftResult> {
     const timeoutMs = opts.timeoutMs ?? 30_000;
-    return this.requireProbe().request('dig', { ...block, timeoutMs }, timeoutMs + 15_000);
+    return this.requireProbe().request('craft', { item, count: opts.count ?? 1, timeoutMs }, timeoutMs + 15_000);
   }
 
   /** The block at a position as the client sees it. */
@@ -158,6 +193,15 @@ export class Client extends ClientCore {
     return this.requireProbe().request('click', { slot, button: opts.button ?? 0, mode: opts.mode ?? 'pickup' });
   }
 
+  /**
+   * Moves items between the open container and the inventory. Without count or slot whole stacks are
+   * shift-clicked, so the game picks the slots (fuel goes into a furnace's fuel slot); otherwise up to
+   * {@code count} items go into {@code slot} or the first slots that take them.
+   */
+  async transfer(item: string, opts: { to?: 'container' | 'inventory'; count?: number; slot?: number } = {}): Promise<TransferResult> {
+    return this.requireProbe().request('transfer', { item, ...opts });
+  }
+
   async closeContainer(): Promise<void> {
     await this.requireProbe().request('close_container');
   }
@@ -192,22 +236,26 @@ export class Client extends ClientCore {
 
   logsSince(opts: { since?: number; limit?: number; contains?: string; source?: LogLine['source'] } = {}): LogLine[] {
     const contains = opts.contains?.toLowerCase();
-    const lines = this.logs.filter(
-      (l) => l.seq > (opts.since ?? 0) && (!opts.source || l.source === opts.source) && (!contains || l.line.toLowerCase().includes(contains)),
+    return this.logs.since(
+      opts.since,
+      (l) => (!opts.source || l.source === opts.source) && (!contains || l.line.toLowerCase().includes(contains)),
+      opts.limit,
     );
-    return opts.limit ? lines.slice(-opts.limit) : lines;
   }
 
   chatSince(since = 0, limit?: number): ChatLine[] {
-    const lines = this.chats.filter((c) => c.seq > since);
-    return limit ? lines.slice(-limit) : lines;
+    return this.chats.since(since, undefined, limit);
   }
 
-  /** Extension events received after {@code since}, optionally only those whose name matches {@code name} (regex). */
-  eventsSince(opts: { since?: number; name?: string; limit?: number } = {}): ExtensionEvent[] {
+  /** The newest sequence number; pass it as {@code since} later to get only what arrived after now. */
+  get lastSeq(): number {
+    return this.seq;
+  }
+
+  /** Game events received after {@code since}, optionally only those whose name matches {@code name} (regex). */
+  eventsSince(opts: { since?: number; name?: string; limit?: number } = {}): GameEvent[] {
     const re = opts.name ? new RegExp(opts.name) : undefined;
-    const list = this.events.filter((e) => e.seq > (opts.since ?? 0) && (!re || re.test(e.name)));
-    return opts.limit ? list.slice(-opts.limit) : list;
+    return this.events.since(opts.since, re && ((e) => re.test(e.name)), opts.limit);
   }
 
   /** Commands registered by extensions and mods, and the extension jars the probe loaded. */
@@ -221,24 +269,24 @@ export class Client extends ClientCore {
   }
 
   /**
-   * Waits for a condition: a chat line matching {@code chat} (regex), an extension event whose name matches
+   * Waits for a condition: a chat line matching {@code chat} (regex), a game event whose name matches
    * {@code event} (regex), an entity appearing/disappearing, or a phase. Resolves with a description of what matched.
    */
   async waitFor(
     cond: { chat?: string; event?: string; entity?: EntityQuery & { present?: boolean }; phase?: Phase },
     timeoutMs = 30_000,
-  ): Promise<{ matched: string; chat?: ChatLine; event?: ExtensionEvent; entities?: EntityInfo[] }> {
+  ): Promise<{ matched: string; chat?: ChatLine; event?: GameEvent; entities?: EntityInfo[] }> {
     const deadline = Date.now() + timeoutMs;
     const chatRe = cond.chat ? new RegExp(cond.chat, 'i') : undefined;
     const eventRe = cond.event ? new RegExp(cond.event) : undefined;
     const startSeq = this.seq;
     for (;;) {
       if (chatRe) {
-        const hit = this.chats.find((c) => c.seq > startSeq && chatRe.test(c.message));
+        const hit = this.chats.find(startSeq, (c) => chatRe.test(c.message));
         if (hit) return { matched: 'chat', chat: hit };
       }
       if (eventRe) {
-        const hit = this.events.find((e) => e.seq > startSeq && eventRe.test(e.name));
+        const hit = this.events.find(startSeq, (e) => eventRe.test(e.name));
         if (hit) return { matched: 'event', event: hit };
       }
       if (cond.phase && this.phase === cond.phase) return { matched: 'phase' };

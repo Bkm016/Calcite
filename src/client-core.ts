@@ -5,8 +5,9 @@ import { Socket } from 'node:net';
 import { join } from 'node:path';
 import { prepareAccount, syncAccount } from './accounts.js';
 import { acquireDisplay, which, type DisplayLease } from './display.js';
+import { Feed } from './feed.js';
 import { hmcJavaHome, hmcListEntry, hmcQuote, hmcVersionArgs, killTree, runHmc, writeHmcProfile, type HmcRun } from './hmc.js';
-import { installProbe, prepareGame, type PreparedGame } from './install.js';
+import { assetsVerified, installProbe, markAssetsVerified, prepareGame, type PreparedGame } from './install.js';
 import { parseLoader } from './loaders.js';
 import { acquireLock } from './lock.js';
 import { logger } from './log.js';
@@ -24,7 +25,7 @@ import {
   type ChatLine,
   type ClientOptions,
   type ClientStatus,
-  type ExtensionEvent,
+  type GameEvent,
   type GameState,
   type LogLine,
   type Phase,
@@ -70,9 +71,9 @@ export abstract class ClientCore extends EventEmitter {
   readonly server?: ServerAddress;
 
   protected phaseValue: Phase = 'idle';
-  protected logs: LogLine[] = [];
-  protected chats: ChatLine[] = [];
-  protected events: ExtensionEvent[] = [];
+  protected readonly logs = new Feed<LogLine>(MAX_LOG);
+  protected readonly chats = new Feed<ChatLine>(MAX_CHAT);
+  protected readonly events = new Feed<GameEvent>(MAX_EVENTS);
   private extensionJars: string[] = [];
   protected seq = 0;
   protected probe: ProbeServer | null = null;
@@ -141,14 +142,12 @@ export abstract class ClientCore extends EventEmitter {
   private pushLog(source: LogLine['source'], line: string): void {
     const entry: LogLine = { seq: ++this.seq, time: Date.now(), source, line };
     this.logs.push(entry);
-    if (this.logs.length > MAX_LOG) this.logs.splice(0, this.logs.length - MAX_LOG);
     this.emit('log', entry);
     if (source === 'game') {
       const chat = /\[CHAT\] (.*)$/.exec(line);
       if (chat) {
         const c: ChatLine = { seq: entry.seq, time: entry.time, message: chat[1] };
         this.chats.push(c);
-        if (this.chats.length > MAX_CHAT) this.chats.splice(0, this.chats.length - MAX_CHAT);
         this.emit('chat', c);
       }
     }
@@ -250,10 +249,9 @@ export abstract class ClientCore extends EventEmitter {
     this.probe.on('connected', () => this.onProbeConnected());
     this.probe.on('disconnected', () => this.note('probe disconnected'));
     this.probe.on('event', (e: { name: string; data: unknown; time: number }) => {
-      const event: ExtensionEvent = { seq: ++this.seq, time: e.time, name: e.name, data: e.data };
+      const event: GameEvent = { seq: ++this.seq, time: e.time, name: e.name, data: e.data };
       this.events.push(event);
-      if (this.events.length > MAX_EVENTS) this.events.splice(0, this.events.length - MAX_EVENTS);
-      this.emit('extension', event);
+      this.emit('event', event);
     });
     this.probeConfig = join(this.paths.probe, `${this.options.name}-${randomBytes(6).toString('hex')}.properties`);
     const cfg = [
@@ -310,6 +308,9 @@ export abstract class ClientCore extends EventEmitter {
       'hmc.java.download': 'false',
       // HeadlessMC only lets offline accounts render when it sees Xvfb running
       'hmc.xvfb.check': String(virtualDisplay),
+      // "dummy" assets skip the hashing of existing asset files; a missing one would become a placeholder, so this is
+      // only set once a launch got through the full download and verification
+      'hmc.assets.dummy': String(await assetsVerified(this.paths, json)),
     };
     const command = [
       'launch',
@@ -378,6 +379,8 @@ export abstract class ClientCore extends EventEmitter {
 
   private async onProbeConnected(): Promise<void> {
     this.note('probe connected');
+    // the game JVM only starts once HeadlessMC has downloaded and verified every asset
+    if (this.game) void markAssetsVerified(this.paths, this.game.json).catch(() => undefined);
     if (this.phaseValue === 'starting' || this.phaseValue === 'reconnecting') this.setPhase('connecting');
     if (!this.poller) {
       this.poller = setInterval(() => void this.poll(), 1000);
@@ -398,7 +401,7 @@ export abstract class ClientCore extends EventEmitter {
     if (JSON.stringify(prev) !== JSON.stringify(state)) this.emit('state', state);
     if (state.screen && /LoadingErrorScreen|ModLoadingError/.test(state.screen) && !this.fatalCode && this.run) {
       // Forge/NeoForge stay on an error screen when mods fail to load; relaunching would not help
-      const errors = this.logs.filter((l) => l.source === 'game' && /\/(ERROR|FATAL)\]|Exception|[Mm]issing|requires/.test(l.line)).slice(-12);
+      const errors = this.logs.since(0, (l) => l.source === 'game' && /\/(ERROR|FATAL)\]|Exception|[Mm]issing|requires/.test(l.line), 12);
       this.fatalCode = 'mod_loading_failed';
       this.lastError = `Mod loading failed (${state.screen}); check the mods and the loader version:\n${errors.map((l) => l.line).join('\n')}`;
       this.note(this.lastError);
@@ -469,7 +472,7 @@ export abstract class ClientCore extends EventEmitter {
     this.emit('exit', code);
     this.note(`game process exited with code ${code}`);
     if (this.stopping || this.relaunching || this.fatalCode) return;
-    const tail = this.logs.filter((l) => l.source === 'game').slice(-15).map((l) => l.line).join('\n');
+    const tail = this.logs.since(0, (l) => l.source === 'game', 15).map((l) => l.line).join('\n');
     this.lastError = `Game exited with code ${code}${tail ? `:\n${tail}` : ''}`;
     this.setPhase('crashed');
     // a crash during the very first start is reported to start(); later crashes are retried
@@ -482,7 +485,7 @@ export abstract class ClientCore extends EventEmitter {
       const phase = this.phaseValue;
       if (phase === 'in_game') return;
       if (!this.server && this.lastState?.ready && this.lastState.loading === false && phase === 'connecting') return;
-      if (phase === 'crashed') throw new CalciteError(this.fatalCode ?? 'crashed',this.lastError ?? 'The game crashed during startup');
+      if (phase === 'crashed') throw new CalciteError(this.fatalCode ?? 'crashed', this.lastError ?? 'The game crashed during startup');
       if (phase === 'disconnected' && this.reconnectLimit() === 0) throw new CalciteError('disconnected', this.lastError ?? 'Disconnected');
       if (Date.now() > deadline) throw new CalciteError('start_timeout', `Client did not start within ${timeoutMs}ms (phase ${phase})`);
       await sleep(250);

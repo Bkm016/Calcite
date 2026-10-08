@@ -86,13 +86,19 @@ export interface ExtensionInfo {
   error?: string;
 }
 
-/** An event sent by an extension or a mod. */
-export interface ExtensionEvent {
+/**
+ * An event from the game: built-in ones ("world.join", "player.hurt", "inventory.change", ... — see the README)
+ * and those sent by extensions and mods.
+ */
+export interface GameEvent {
   seq: number;
   time: number;
   name: string;
   data: unknown;
 }
+
+/** @deprecated Renamed to {@link GameEvent}. */
+export type ExtensionEvent = GameEvent;
 
 export interface ChatLine {
   seq: number;
@@ -136,15 +142,33 @@ export type BlockFace = 'down' | 'up' | 'north' | 'south' | 'west' | 'east';
 
 export type ClickMode = 'pickup' | 'quick_move' | 'swap' | 'clone' | 'throw' | 'quick_craft' | 'pickup_all';
 
+export interface WalkOptions {
+  /** Target height; without it any height at x/z counts. */
+  y?: number;
+  /** Stop within this many blocks (default 0.5). */
+  range?: number;
+  sprint?: boolean;
+  /** Walk in a straight line instead of planning a path. */
+  direct?: boolean;
+  /** Stop with reason "damaged" when the player is hurt. */
+  stopOnDamage?: boolean;
+  timeoutMs?: number;
+}
+
 export interface WalkResult {
   arrived: boolean;
-  /** Why it stopped early: "stuck" or "timeout". */
+  /**
+   * Why it stopped early: "no_path" (unreachable through the loaded terrain; the player still gets as close as
+   * it can), "stuck", "off_path" (pushed away and re-planning failed), "timeout" or "damaged".
+   */
   reason?: string;
-  /** Remaining horizontal distance. */
+  /** Remaining distance. */
   distance: number;
   x: number;
   y: number;
   z: number;
+  /** How often the path was planned again after the player was pushed off it. */
+  replans?: number;
 }
 
 export interface DigResult {
@@ -152,6 +176,89 @@ export interface DigResult {
   reason?: string;
   block?: string;
   ticks?: number;
+}
+
+export interface BlockMatch extends BlockPosition {
+  id: string;
+  /** Distance from the player's feet. */
+  distance: number;
+}
+
+export interface BlockSearch {
+  /** Block ids or patterns: "oak_log", "minecraft:*_ore", "*planks" ("minecraft:" is implied). */
+  blocks: string | string[];
+  /** Horizontal search radius in blocks (default 32, at most 128). */
+  radius?: number;
+  /** Most matches to return, nearest first (default 16). */
+  limit?: number;
+}
+
+export interface BlockSearchResult {
+  count: number;
+  /** The search ran out of time before covering the whole radius. */
+  truncated?: boolean;
+  blocks: BlockMatch[];
+}
+
+export interface NearbyEntity {
+  id: number;
+  type: string;
+  name?: string;
+  /** Position relative to the player: [dx, dy, dz]. */
+  offset: [number, number, number];
+  distance: number;
+  health?: number;
+}
+
+/** A compact description of the player's surroundings, sized for a language model. */
+export interface Surroundings {
+  x: number;
+  y: number;
+  z: number;
+  facing: string;
+  dimension?: string;
+  biome?: string;
+  /** 0-23999; 0 is sunrise, 6000 noon, 13000 night. */
+  timeOfDay?: number;
+  raining?: boolean;
+  thundering?: boolean;
+  /** The block under the player's feet. */
+  standingOn?: string;
+  /** The block the player stands in, when not air (water, tall grass, ...). */
+  in?: string;
+  /** Top-down map rows from north to south, west to east; the player is '@'. See {@link legend}. */
+  map: string[];
+  /** World [x, z] of the map's first character. */
+  mapOrigin: [number, number];
+  legend: Record<string, string>;
+  /** Most common blocks around the player with the nearest position of each. */
+  blocks: { id: string; count: number; nearest: [number, number, number] }[];
+  entities: NearbyEntity[];
+}
+
+export interface CraftResult {
+  item: string;
+  /** Items made. */
+  crafted: number;
+  /** Items asked for. */
+  count: number;
+  /** Set when fewer than {@code count} were crafted: "missing_ingredients", "inventory_full", "timeout", ... */
+  reason?: string;
+}
+
+export interface TransferResult {
+  item: string;
+  moved: number;
+  container: ContainerInfo;
+}
+
+/** The action that is running (walk_to, dig, craft) and its progress. */
+export interface TaskStatus {
+  running: boolean;
+  /** "walk_to", "dig" or "craft". */
+  name?: string;
+  ticks?: number;
+  [progress: string]: unknown;
 }
 
 export interface HitTarget {
@@ -203,6 +310,8 @@ export interface ContainerInfo {
   items?: (ItemInfo & { slot: number; inventorySlot?: number })[];
   /** Stack held by the cursor. */
   carried?: ItemInfo;
+  /** Smelting state of a furnace, smoker or blast furnace; progress and fuel are 0-1. */
+  furnace?: { lit: boolean; progress?: number; fuel?: number };
 }
 
 export interface GameState {

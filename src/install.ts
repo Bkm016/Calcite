@@ -35,6 +35,24 @@ export async function installProbe(paths: CalcitePaths): Promise<string> {
   return target;
 }
 
+function assetsMarker(paths: CalcitePaths, json: VersionJson): string | undefined {
+  return json.assetIndex && join(paths.minecraft, 'assets', 'indexes', `${json.assetIndex.id}.calcite-verified`);
+}
+
+/**
+ * Whether an earlier launch of a version with the same asset index reached the game, i.e. HeadlessMC downloaded and
+ * verified all of its assets. Launches after that may skip HeadlessMC's per-launch hashing of every asset file.
+ */
+export async function assetsVerified(paths: CalcitePaths, json: VersionJson): Promise<boolean> {
+  const marker = assetsMarker(paths, json);
+  return !!marker && stat(marker).then(() => true, () => false);
+}
+
+export async function markAssetsVerified(paths: CalcitePaths, json: VersionJson): Promise<void> {
+  const marker = assetsMarker(paths, json);
+  if (marker) await writeFile(marker, '');
+}
+
 export interface PrepareOptions {
   /** Minecraft version id, "release" or "snapshot". */
   version: string;

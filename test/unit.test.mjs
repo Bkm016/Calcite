@@ -14,6 +14,7 @@ import { parseOptions, serializeOptions, writeOptions, defaultOptions } from '..
 import { bypassProxy, javaProxyProps, proxyFor } from '../dist/net.js';
 import { resolvePaths, safeProbeDir } from '../dist/paths.js';
 import { acquireLock } from '../dist/lock.js';
+import { Feed } from '../dist/feed.js';
 import { listAccounts, offlineUuid, prepareAccount, removeAccount, syncAccount } from '../dist/accounts.js';
 import { hmcJavaHome, hmcListEntry, hmcQuote, hmcVersionArgs } from '../dist/hmc.js';
 
@@ -173,6 +174,19 @@ test('Client validates names', () => {
   assert.throws(() => new Client({ name: 'ok', version: '1.21.11', account: { type: 'offline', username: 'x' } }), CalciteError);
   const c = new Client({ name: 'ok', version: '1.21.11', paths: resolvePaths('/tmp/calcite-unused') });
   assert.equal(c.phase, 'idle');
+});
+
+test('Feed keeps the newest entries and reads them by sequence', () => {
+  const feed = new Feed(4);
+  for (let seq = 1; seq <= 10; seq++) feed.push({ seq, even: seq % 2 === 0 });
+  const seqs = (list) => list.map((e) => e.seq);
+  assert.ok(seqs(feed.since()).at(0) >= 5 && seqs(feed.since()).at(-1) === 10, 'old entries drop off');
+  assert.deepEqual(seqs(feed.since(8)), [9, 10]);
+  assert.deepEqual(seqs(feed.since(0, (e) => e.even, 2)), [8, 10]);
+  assert.equal(feed.find(7, (e) => e.even)?.seq, 8);
+  assert.equal(feed.find(10, () => true), undefined);
+  assert.equal(feed.last()?.seq, 10);
+  assert.deepEqual(new Feed(3).since(), []);
 });
 
 test('zipContains reads the central directory', async () => {

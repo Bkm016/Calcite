@@ -30,6 +30,7 @@ export interface VersionJson {
   releaseTime: string;
   javaVersion?: { majorVersion: number; component?: string };
   downloads: { client: Download; client_mappings?: Download; server?: Download };
+  assetIndex?: { id: string };
   arguments?: { game?: unknown[]; jvm?: unknown[] };
   minecraftArguments?: string;
 }

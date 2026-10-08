@@ -6,7 +6,7 @@ import java.util.Locale;
 import java.util.Map;
 
 /** World queries: blocks, the crosshair target and registry ids. */
-final class World {
+final class World implements Ops.Module {
 
     private final Game game;
     private final Ref ref;
@@ -16,10 +16,14 @@ final class World {
         this.ref = ref;
     }
 
+    @Override
+    public void register(Ops ops) {
+        ops.add("block", a -> block(a.blockPos()));
+        ops.add("target", a -> game.withPlayer((mc, player) -> describeHit(mc)));
+    }
+
     Map<String, Object> block(final int[] pos) throws Exception {
-        final Object mc = game.requireMinecraft();
-        return game.onGameThread(() -> {
-            game.requirePlayer(mc);
+        return game.withPlayer((mc, player) -> {
             Object state = blockState(mc, pos);
             Map<String, Object> out = new LinkedHashMap<String, Object>();
             out.put("x", pos[0]);
@@ -29,7 +33,7 @@ final class World {
                 out.put("loaded", false);
                 return out;
             }
-            out.put("id", registryKey("BLOCK", game.optCall(state, "getBlock")));
+            out.put("id", blockId(state));
             out.put("air", game.optCall(state, "isAir"));
             String s = state.toString();
             int bracket = s.indexOf('[');
@@ -37,36 +41,19 @@ final class World {
                 out.put("properties", s.substring(bracket + 1, s.length() - 1));
             }
             return out;
-        }, 5000);
+        });
     }
 
-    /** What the crosshair points at. */
-    Map<String, Object> target() throws Exception {
-        final Object mc = game.requireMinecraft();
-        return game.onGameThread(() -> {
-            game.requirePlayer(mc);
-            return describeHit(mc);
-        }, 5000);
-    }
-
+    /** What the crosshair points at (game thread). */
     Map<String, Object> describeHit(Object mc) throws Exception {
         Map<String, Object> out = new LinkedHashMap<String, Object>();
         Object hit = game.optGet(mc, "hitResult");
         Object type = hit == null ? null : game.optCall(hit, "getType");
-        String kind = type == null ? "miss" : ((Enum<?>) type).name();
-        Mappings.ClassEntry entry = type == null ? null : ref.mappings().byRuntime(type.getClass().getName());
-        if (entry != null && !ref.mappings().isIdentity()) {
-            for (String named : new String[]{"MISS", "BLOCK", "ENTITY"}) {
-                if (kind.equals(entry.field(named))) {
-                    kind = named;
-                }
-            }
-        }
-        kind = kind.toLowerCase(Locale.ROOT);
+        String kind = type == null ? "miss" : ref.enumName(type).toLowerCase(Locale.ROOT);
         out.put("type", kind);
         if ("block".equals(kind)) {
             Object pos = game.optCall(hit, "getBlockPos");
-            int[] p = blockCoords(pos);
+            int[] p = {Ref.intValue(game.optCall(pos, "getX"), 0), Ref.intValue(game.optCall(pos, "getY"), 0), Ref.intValue(game.optCall(pos, "getZ"), 0)};
             out.put("x", p[0]);
             out.put("y", p[1]);
             out.put("z", p[2]);
@@ -74,11 +61,10 @@ final class World {
             out.put("face", dir == null ? null : faceName(dir));
             Object state = blockState(mc, p);
             if (state != null) {
-                out.put("block", registryKey("BLOCK", game.optCall(state, "getBlock")));
+                out.put("block", blockId(state));
             }
         } else if ("entity".equals(kind)) {
-            Object e = game.optCall(hit, "getEntity");
-            out.put("entity", game.describe(e, game.position(e)));
+            out.put("entity", game.describe(game.optCall(hit, "getEntity")));
         }
         return out;
     }
@@ -91,6 +77,7 @@ final class World {
         return name == null ? direction.toString().toLowerCase(Locale.ROOT) : name.toString();
     }
 
+    /** The block state at a position, or null outside a world. */
     Object blockState(Object mc, int[] pos) throws Exception {
         Object level = game.optGet(mc, "level");
         if (level == null) {
@@ -104,8 +91,9 @@ final class World {
         return ref.construct("net.minecraft.core.BlockPos", pos[0], pos[1], pos[2]);
     }
 
-    private int[] blockCoords(Object pos) {
-        return new int[]{Ref.intValue(game.optCall(pos, "getX"), 0), Ref.intValue(game.optCall(pos, "getY"), 0), Ref.intValue(game.optCall(pos, "getZ"), 0)};
+    /** Registry id of a block state's block, e.g. "minecraft:stone". */
+    String blockId(Object state) {
+        return registryKey("BLOCK", game.optCall(state, "getBlock"));
     }
 
     /** Registry id ("minecraft:stone") of a value in BuiltInRegistries.NAME (1.19.3+) or Registry.NAME. */
@@ -130,5 +118,11 @@ final class World {
             }
         }
         return value.toString();
+    }
+
+    /** "diamond_ore" → "minecraft:diamond_ore"; ids with a namespace and patterns are kept. */
+    static String qualify(String id) {
+        String s = id.trim().toLowerCase(Locale.ROOT);
+        return s.indexOf(':') >= 0 || s.startsWith("*") ? s : "minecraft:" + s;
     }
 }
