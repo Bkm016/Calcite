@@ -251,6 +251,7 @@ export class CalciteError extends Error {
 const NAME_RE = /^[A-Za-z0-9_.-]{1,64}$/;
 const MAX_LOG = 5000;
 const MAX_CHAT = 1000;
+const HEADLESS_MIN_JAVA = 17;
 
 export function parseServer(server: string | ServerAddress): ServerAddress {
   if (typeof server !== 'string') return { host: server.host, port: server.port || 25565 };
@@ -488,7 +489,11 @@ export class Client extends EventEmitter {
     const clientJar = await ensureClientJar(this.paths, this.versionJson);
     this.names = await resolveNames(this.paths, this.versionJson, clientJar);
     if (this.names.kind === 'unsupported') this.note(`probe disabled: ${this.names.reason}`);
-    this.java = await ensureJava(this.paths, requiredJavaMajor(this.versionJson), {
+    this.headlessValue = this.resolveHeadless();
+    // HeadlessMC 3's LWJGL stubs need Java 9+; the Java 8 versions (up to 1.16.5) run headless on Java 17 instead
+    const required = requiredJavaMajor(this.versionJson);
+    const major = this.headlessValue && required < 9 ? HEADLESS_MIN_JAVA : required;
+    this.java = await ensureJava(this.paths, major, {
       javaPath: this.options.javaPath,
       allowDownload: this.options.allowJavaDownload,
     });
@@ -510,7 +515,6 @@ export class Client extends EventEmitter {
     const java = this.java!;
     const hmcJar = await ensureHmc(this.paths);
     const probeJar = await installProbe(this.paths);
-    this.headlessValue = this.resolveHeadless();
 
     if (this.server) {
       this.setPhase('waiting_for_server');
@@ -554,6 +558,8 @@ export class Client extends EventEmitter {
     const proxyArgs = Object.entries(javaProxyProps()).map(([k, v]) => `-D${k}=${v}`);
     const jvmArgs = [`-Xmx${this.options.memory ?? '2G'}`, ...proxyArgs, ...(this.options.jvmArgs ?? [])];
     if (this.names?.kind !== 'unsupported') jvmArgs.unshift(`-javaagent:${probeJar}=${this.probeConfig}`);
+    // HeadlessMC's stubbed LWJGL buffers have no native address; JOML's Unsafe path writes to it and crashes the JVM
+    if (this.headlessValue) jvmArgs.unshift('-Djoml.nounsafe=true');
     const gameArgs = [...(this.options.gameArgs ?? [])];
     if (this.server) {
       if (supportsQuickPlay(json)) gameArgs.unshift('--quickPlayMultiplayer', `${this.server.host}:${this.server.port}`);
