@@ -62,7 +62,7 @@ public final class Game {
         return mc;
     }
 
-    private Object requireMinecraft() {
+    Object requireMinecraft() {
         Object mc = minecraft();
         if (mc == null) {
             throw new ProbeException("not_ready", "Minecraft is still starting");
@@ -116,7 +116,7 @@ public final class Game {
                 Object player = optGet(mc, "player");
                 s.put("inGame", level != null && player != null);
                 s.put("loading", optGet(mc, "overlay") != null);
-                Object screen = optGet(mc, "screen");
+                Object screen = screen(mc);
                 s.put("screen", screen == null ? null : ref.simpleNamed(screen.getClass()));
                 if (screen != null && "DisconnectedScreen".equals(ref.simpleNamed(screen.getClass()))) {
                     s.put("disconnectReason", disconnectReason(screen));
@@ -146,6 +146,14 @@ public final class Game {
                     Object health = optCall(player, "getHealth");
                     if (health instanceof Number) {
                         p.put("health", ((Number) health).doubleValue());
+                    }
+                    Object food = optCall(optCall(player, "getFoodData"), "getFoodLevel");
+                    if (food instanceof Number) {
+                        p.put("food", ((Number) food).intValue());
+                    }
+                    Object mode = optCall(optCall(optGet(mc, "gameMode"), "getPlayerMode"), "getName");
+                    if (mode != null) {
+                        p.put("gameMode", mode.toString());
                     }
                     p.put("dimension", dimension(level));
                     s.put("player", p);
@@ -225,7 +233,7 @@ public final class Game {
         }, 10000);
     }
 
-    private Map<String, Object> describe(Object e, double[] pos) {
+    Map<String, Object> describe(Object e, double[] pos) {
         Map<String, Object> m = new LinkedHashMap<String, Object>();
         m.put("id", optCall(e, "getId"));
         Object uuid = optCall(e, "getUUID");
@@ -283,7 +291,7 @@ public final class Game {
     }
 
     /** Entity position as {x, y, z}; supports getX() (1.15+), position()/Vec3 and legacy public fields. */
-    private double[] position(Object e) {
+    double[] position(Object e) {
         Object x = optCall(e, "getX");
         Object y = optCall(e, "getY");
         Object z = optCall(e, "getZ");
@@ -306,7 +314,7 @@ public final class Game {
         return null;
     }
 
-    private Double rotation(Object e, String method, String field) {
+    Double rotation(Object e, String method, String field) {
         Object v = optCall(e, method);
         if (v == null) {
             v = optGet(e, field);
@@ -370,10 +378,7 @@ public final class Game {
                     throw new ProbeException("unsupported", "LocalPlayer#respawn is not available");
                 }
                 // close the death screen
-                Method setScreen = ref.method(mc.getClass(), "setScreen", 1);
-                if (setScreen != null) {
-                    setScreen.invoke(mc, (Object) null);
-                }
+                setScreen(mc, null);
                 return null;
             }
         }, 5000);
@@ -393,7 +398,7 @@ public final class Game {
                     throw new ProbeException("unsupported", "ConnectScreen not found");
                 }
                 Class<?> titleClass = ref.cls("net.minecraft.client.gui.screens.TitleScreen");
-                Object parent = titleClass == null ? optGet(mc, "screen") : titleClass.getConstructor().newInstance();
+                Object parent = titleClass == null ? screen(mc) : titleClass.getConstructor().newInstance();
                 // 1.17+: static startConnecting(Screen, Minecraft, ServerAddress, ServerData[, boolean[, TransferState]])
                 for (int n = 6; n >= 4; n--) {
                     Method m = ref.method(connect, "startConnecting", n);
@@ -407,8 +412,7 @@ public final class Game {
                     Class<?>[] types = c.getParameterTypes();
                     if (types.length == 4 && types[2] == String.class && types[3] == int.class) {
                         Object screen = c.newInstance(connectArgs(types, mc, parent, host, port));
-                        Method setScreen = ref.method(mc.getClass(), "setScreen", 1);
-                        setScreen.invoke(mc, screen);
+                        setScreen(mc, screen);
                         return null;
                     }
                 }
@@ -475,7 +479,7 @@ public final class Game {
         return null;
     }
 
-    private Object requirePlayer(Object mc) {
+    Object requirePlayer(Object mc) {
         Object player = optGet(mc, "player");
         if (player == null) {
             throw new ProbeException("not_in_game", "The client is not in a world");
@@ -742,6 +746,29 @@ public final class Game {
     // ---------------------------------------------------------------- helpers
 
     /** Component → plain text (getString), tolerating plain strings and nulls. */
+    /** The open screen; 26.x keeps it in Minecraft.gui. */
+    Object screen(Object mc) {
+        Object screen = optGet(mc, "screen");
+        if (screen == null) {
+            Object gui = optGet(mc, "gui");
+            screen = gui == null ? null : optGet(gui, "screen");
+        }
+        return screen;
+    }
+
+    void setScreen(Object mc, Object screen) throws Exception {
+        Object target = mc;
+        Method m = ref.method(mc.getClass(), "setScreen", 1);
+        if (m == null) {
+            target = optGet(mc, "gui");
+            m = target == null ? null : ref.method(target.getClass(), "setScreen", 1);
+        }
+        if (m == null) {
+            throw new ProbeException("unsupported", "setScreen is not available");
+        }
+        m.invoke(target, screen);
+    }
+
     String text(Object component) {
         if (component == null) {
             return null;
@@ -781,7 +808,7 @@ public final class Game {
      * Invokes {@code target.name(args)} when a method with that name and arity exists (String parameters are
      * preferred). Returns false when no such method exists; rethrows failures of the call itself.
      */
-    private boolean invoke(Object target, String name, Object... args) throws Exception {
+    boolean invoke(Object target, String name, Object... args) throws Exception {
         Method m = null;
         if (args.length > 0 && args[0] instanceof String) {
             String[] types = new String[args.length];

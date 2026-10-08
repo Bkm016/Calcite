@@ -60,6 +60,7 @@ export function createMcpServer(opts: McpOptions = {}): { server: McpServer; man
       instructions: [
         'Calcite drives real Minecraft Java Edition clients (any version 1.14.4+ fully, older versions launch without probe features).',
         'Typical flow: launch_client (first launch of a version downloads ~0.5-1 GB and can take minutes) → get_state / get_entities / send_chat / run_command / screenshot / wait_for → stop_client.',
+        'Acting: look / walk_to / move to get around, attack and use (right click: chests, doors, placing blocks, eating) on entity ids from get_entities or block coordinates, dig to mine, get_inventory / select_slot for items, get_container / click_slot / close_container for chests and other containers. Check results with get_state, get_target, get_block or a screenshot.',
         'Offline accounts need no login. For premium servers call account_login_start, show the URL to the user, then poll account_login_status.',
         'Screenshots need render "on-demand" (default) or "always"; with "on-demand" frames are only rendered while a screenshot is taken, keeping CPU usage low.',
       ].join('\n'),
@@ -258,6 +259,197 @@ export function createMcpServer(opts: McpOptions = {}): { server: McpServer; man
       await manager.resolve(client).respawn();
       return text('respawned');
     }),
+  );
+
+  const coord = z.number().describe('Block coordinate');
+  const face = z.enum(['down', 'up', 'north', 'south', 'west', 'east']).optional().describe('Block face to target (default: the face nearest to the player)');
+
+  server.registerTool(
+    'look',
+    {
+      title: 'Look',
+      description: 'Turns the player: either to yaw/pitch in degrees (yaw 0 = south, 90 = west, 180 = north, -90 = east; pitch -90 = up, 90 = down) or towards the point x/y/z.',
+      inputSchema: {
+        client: clientName,
+        yaw: z.number().optional(),
+        pitch: z.number().min(-90).max(90).optional(),
+        x: z.number().optional(),
+        y: z.number().optional(),
+        z: z.number().optional(),
+      },
+    },
+    safe(async ({ client, yaw, pitch, x, y, z: zz }) => {
+      const target = manager.resolve(client);
+      if (x !== undefined || y !== undefined || zz !== undefined) {
+        if (x === undefined || y === undefined || zz === undefined) throw new CalciteError('bad_request', 'Give all of x, y and z');
+        return text(await target.look({ x, y, z: zz }));
+      }
+      return text(await target.look({ yaw, pitch }));
+    }),
+  );
+
+  server.registerTool(
+    'walk_to',
+    {
+      title: 'Walk to a position',
+      description:
+        'Walks in a straight line to x/z (jumps over single blocks, swims). Returns arrived=false with reason "stuck" or "timeout" when blocked; there is no path finding, so route around obstacles with intermediate points.',
+      inputSchema: {
+        client: clientName,
+        x: z.number(),
+        z: z.number(),
+        range: z.number().positive().max(16).default(0.5).describe('Stop within this many blocks'),
+        sprint: z.boolean().default(true),
+        timeoutSeconds: z.number().positive().max(600).default(60),
+      },
+    },
+    safe(async ({ client, x, z: zz, range, sprint, timeoutSeconds }) =>
+      text(await manager.resolve(client).walkTo(x, zz, { range, sprint, timeoutMs: timeoutSeconds * 1000 })),
+    ),
+  );
+
+  server.registerTool(
+    'move',
+    {
+      title: 'Hold movement keys',
+      description:
+        'Presses (true) or releases (false) movement keys; omitted keys keep their state. With ticks (20 per second) they are released automatically, otherwise they stay held until changed or stop_actions.',
+      inputSchema: {
+        client: clientName,
+        forward: z.boolean().optional(),
+        back: z.boolean().optional(),
+        left: z.boolean().optional(),
+        right: z.boolean().optional(),
+        jump: z.boolean().optional(),
+        sneak: z.boolean().optional(),
+        sprint: z.boolean().optional(),
+        ticks: z.number().int().positive().max(12_000).optional(),
+      },
+    },
+    safe(async ({ client, ticks, ...controls }) => text(await manager.resolve(client).move(controls, { ticks }))),
+  );
+
+  server.registerTool(
+    'stop_actions',
+    { title: 'Stop actions', description: 'Releases all keys and cancels a running walk_to, dig or held use.', inputSchema: { client: clientName } },
+    safe(async ({ client }) => {
+      await manager.resolve(client).stopActions();
+      return text('stopped');
+    }),
+  );
+
+  server.registerTool(
+    'attack',
+    {
+      title: 'Attack (left click)',
+      description: 'Attacks the entity with this id (from get_entities; the player turns to it, must be within reach) or, without an id, whatever the crosshair points at.',
+      inputSchema: { client: clientName, entityId: z.number().int().optional() },
+    },
+    safe(async ({ client, entityId }) => text(await manager.resolve(client).attack(entityId))),
+  );
+
+  server.registerTool(
+    'use',
+    {
+      title: 'Use / interact (right click)',
+      description:
+        'Right click on an entity (entityId: trade, ride, feed...), on a block (x/y/z: open chests and doors, press buttons, place the held block against that face) or, with neither, on whatever the crosshair points at / the held item in the air. holdTicks keeps the button held (eat, drink, draw a bow).',
+      inputSchema: {
+        client: clientName,
+        entityId: z.number().int().optional(),
+        x: coord.optional(),
+        y: coord.optional(),
+        z: coord.optional(),
+        face,
+        holdTicks: z.number().int().positive().max(1200).optional(),
+      },
+    },
+    safe(async ({ client, entityId, x, y, z: zz, face: f, holdTicks }) => {
+      const hasBlock = x !== undefined || y !== undefined || zz !== undefined;
+      if (hasBlock && (x === undefined || y === undefined || zz === undefined)) throw new CalciteError('bad_request', 'Give all of x, y and z');
+      const block = hasBlock ? { x: x!, y: y!, z: zz!, face: f } : undefined;
+      return text(await manager.resolve(client).use({ entityId, block, holdTicks }));
+    }),
+  );
+
+  server.registerTool(
+    'dig',
+    {
+      title: 'Mine a block',
+      description: 'Mines the block at x/y/z like a player holding left click (real break time in survival, instant in creative). The block must be within reach.',
+      inputSchema: { client: clientName, x: coord, y: coord, z: coord, face, timeoutSeconds: z.number().positive().max(300).default(30) },
+    },
+    safe(async ({ client, timeoutSeconds, face: f, ...pos }) => text(await manager.resolve(client).dig({ ...pos, face: f }, { timeoutMs: timeoutSeconds * 1000 }))),
+  );
+
+  server.registerTool(
+    'get_block',
+    { title: 'Block at a position', description: 'Block id and state properties at x/y/z as the client sees them.', inputSchema: { client: clientName, x: coord, y: coord, z: coord } },
+    safe(async ({ client, ...pos }) => text(await manager.resolve(client).block(pos))),
+  );
+
+  server.registerTool(
+    'get_target',
+    { title: 'Crosshair target', description: 'The block (with face) or entity the crosshair points at.', inputSchema: { client: clientName } },
+    safe(async ({ client }) => text(await manager.resolve(client).target())),
+  );
+
+  server.registerTool(
+    'get_inventory',
+    {
+      title: 'Inventory',
+      description: 'Non-empty inventory slots (0-8 hotbar, 9-35 main, 36-39 armor, 40 offhand) and the selected hotbar slot.',
+      inputSchema: { client: clientName },
+    },
+    safe(async ({ client }) => text(await manager.resolve(client).inventory())),
+  );
+
+  server.registerTool(
+    'select_slot',
+    { title: 'Select hotbar slot', description: 'Selects hotbar slot 0-8 (the held item).', inputSchema: { client: clientName, slot: z.number().int().min(0).max(8) } },
+    safe(async ({ client, slot }) => text(await manager.resolve(client).selectSlot(slot))),
+  );
+
+  server.registerTool(
+    'get_container',
+    {
+      title: 'Open container',
+      description:
+        'The open container (chest, barrel, furnace, villager trades...) with its non-empty slots; slots 0..containerSlots-1 are the container, the rest the player inventory. waitSeconds waits for one to open, e.g. right after use on a chest.',
+      inputSchema: { client: clientName, waitSeconds: z.number().min(0).max(30).default(0) },
+    },
+    safe(async ({ client, waitSeconds }) => text(await manager.resolve(client).container({ waitMs: waitSeconds * 1000 }))),
+  );
+
+  server.registerTool(
+    'click_slot',
+    {
+      title: 'Click a container slot',
+      description:
+        'Clicks a slot of the open container (or of the inventory when none is open) and returns the new contents. mode: pickup (button 0 left / 1 right), quick_move (shift click: move the stack between container and inventory), swap (button = hotbar slot 0-8, 40 offhand), throw (button 1 = whole stack), clone, quick_craft, pickup_all. Slot -999 clicks outside (drops the carried stack).',
+      inputSchema: {
+        client: clientName,
+        slot: z.number().int().min(-999),
+        button: z.number().int().min(0).max(40).default(0),
+        mode: z.enum(['pickup', 'quick_move', 'swap', 'clone', 'throw', 'quick_craft', 'pickup_all']).default('pickup'),
+      },
+    },
+    safe(async ({ client, slot, button, mode }) => text(await manager.resolve(client).click(slot, { button, mode }))),
+  );
+
+  server.registerTool(
+    'close_container',
+    { title: 'Close container', description: 'Closes the open container or screen.', inputSchema: { client: clientName } },
+    safe(async ({ client }) => {
+      await manager.resolve(client).closeContainer();
+      return text('closed');
+    }),
+  );
+
+  server.registerTool(
+    'drop_item',
+    { title: 'Drop item', description: 'Drops one item, or the whole stack, from the selected hotbar slot.', inputSchema: { client: clientName, all: z.boolean().default(false) } },
+    safe(async ({ client, all }) => text(await manager.resolve(client).drop({ all }))),
   );
 
   server.registerTool(

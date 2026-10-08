@@ -38,6 +38,7 @@ public final class Probe {
     private final ExecutorService workers = Executors.newCachedThreadPool(daemon("calcite-probe-worker"));
     private final ScheduledExecutorService timer = Executors.newSingleThreadScheduledExecutor(daemon("calcite-probe-timer"));
     private volatile Game game;
+    private volatile Actions actions;
     private volatile String initError;
     private Mappings mappings;
     private final Object writeLock = new Object();
@@ -155,7 +156,19 @@ public final class Probe {
             while (g.minecraft() == null) {
                 sleep(250);
             }
+            final Actions a = new Actions(g, ref);
+            actions = a;
             game = g;
+            timer.scheduleAtFixedRate(new Runnable() {
+                @Override
+                public void run() {
+                    try {
+                        a.pump();
+                    } catch (Throwable ignored) {
+                        // keep the timer alive
+                    }
+                }
+            }, 10, 10, TimeUnit.MILLISECONDS);
             if ("off".equals(args.get("render")) && !g.headless()) {
                 g.setRender(false);
             }
@@ -287,6 +300,57 @@ public final class Probe {
             g.respawn();
             return true;
         }
+        Actions act = actions;
+        if ("look".equals(op)) {
+            double[] at = a.containsKey("x") ? new double[]{num(a.get("x"), 0), num(a.get("y"), 0), num(a.get("z"), 0)} : null;
+            return act.look(optNum(a.get("yaw")), optNum(a.get("pitch")), at);
+        }
+        if ("move".equals(op)) {
+            return act.move(a, (int) num(a.get("ticks"), 0));
+        }
+        if ("stop".equals(op)) {
+            act.stop();
+            return true;
+        }
+        if ("walk_to".equals(op)) {
+            return act.walkTo(num(a.get("x"), 0), num(a.get("z"), 0), num(a.get("range"), 0.5),
+                    !Boolean.FALSE.equals(a.get("sprint")), (long) num(a.get("timeoutMs"), 60000));
+        }
+        if ("attack".equals(op)) {
+            return act.attack(optInt(a.get("entityId")));
+        }
+        if ("use".equals(op)) {
+            return act.use(optInt(a.get("entityId")), a.containsKey("x") ? pos(a) : null, (String) a.get("face"), (int) num(a.get("holdTicks"), 0));
+        }
+        if ("dig".equals(op)) {
+            return act.dig(pos(a), (String) a.get("face"), (long) num(a.get("timeoutMs"), 30000));
+        }
+        if ("block".equals(op)) {
+            return act.block(pos(a));
+        }
+        if ("target".equals(op)) {
+            return act.target();
+        }
+        if ("inventory".equals(op)) {
+            return act.inventory();
+        }
+        if ("select_slot".equals(op)) {
+            return act.selectSlot((int) num(a.get("slot"), -1));
+        }
+        if ("container".equals(op)) {
+            return act.container((long) num(a.get("waitMs"), 0));
+        }
+        if ("click".equals(op)) {
+            Object mode = a.get("mode");
+            return act.click((int) num(a.get("slot"), -1), (int) num(a.get("button"), 0), mode instanceof String ? (String) mode : "pickup");
+        }
+        if ("close_container".equals(op)) {
+            act.closeContainer();
+            return true;
+        }
+        if ("drop".equals(op)) {
+            return act.drop(Boolean.TRUE.equals(a.get("all")));
+        }
         throw new Game.ProbeException("unknown_op", "Unknown operation: " + op);
     }
 
@@ -296,6 +360,23 @@ public final class Probe {
             throw new Game.ProbeException("bad_request", "Missing string argument: " + key);
         }
         return (String) v;
+    }
+
+    private static int[] pos(Map<String, Object> a) {
+        for (String k : new String[]{"x", "y", "z"}) {
+            if (!(a.get(k) instanceof Number)) {
+                throw new Game.ProbeException("bad_request", "Missing block coordinate: " + k);
+            }
+        }
+        return new int[]{(int) Math.floor(num(a.get("x"), 0)), (int) Math.floor(num(a.get("y"), 0)), (int) Math.floor(num(a.get("z"), 0))};
+    }
+
+    private static Double optNum(Object v) {
+        return v instanceof Number ? ((Number) v).doubleValue() : null;
+    }
+
+    private static Integer optInt(Object v) {
+        return v instanceof Number ? ((Number) v).intValue() : null;
     }
 
     private static double num(Object v, double def) {

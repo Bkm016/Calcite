@@ -83,7 +83,99 @@ export interface PlayerState {
   yaw?: number;
   pitch?: number;
   health?: number;
+  food?: number;
+  /** survival, creative, adventure or spectator. */
+  gameMode?: string;
   dimension?: string;
+}
+
+export interface MoveControls {
+  forward?: boolean;
+  back?: boolean;
+  left?: boolean;
+  right?: boolean;
+  jump?: boolean;
+  sneak?: boolean;
+  sprint?: boolean;
+}
+
+export interface BlockPosition {
+  x: number;
+  y: number;
+  z: number;
+}
+
+export type BlockFace = 'down' | 'up' | 'north' | 'south' | 'west' | 'east';
+
+export type ClickMode = 'pickup' | 'quick_move' | 'swap' | 'clone' | 'throw' | 'quick_craft' | 'pickup_all';
+
+export interface WalkResult {
+  arrived: boolean;
+  /** Why it stopped early: "stuck" or "timeout". */
+  reason?: string;
+  /** Remaining horizontal distance. */
+  distance: number;
+  x: number;
+  y: number;
+  z: number;
+}
+
+export interface DigResult {
+  broken: boolean;
+  reason?: string;
+  block?: string;
+  ticks?: number;
+}
+
+export interface HitTarget {
+  type: 'block' | 'entity' | 'miss';
+  x?: number;
+  y?: number;
+  z?: number;
+  face?: BlockFace;
+  block?: string;
+  entity?: EntityInfo;
+  holdTicks?: number;
+}
+
+export interface BlockInfo extends BlockPosition {
+  /** false when the chunk is not loaded on the client. */
+  loaded?: boolean;
+  id?: string;
+  air?: boolean;
+  /** Block state properties, e.g. "facing=north,type=single,waterlogged=false". */
+  properties?: string;
+}
+
+export interface ItemInfo {
+  id: string;
+  count: number;
+  name: string;
+  damage?: number;
+  maxDamage?: number;
+}
+
+export interface InventoryInfo {
+  /** Selected hotbar slot (0-8). */
+  selected: number;
+  /** Non-empty slots: 0-8 hotbar, 9-35 main, 36-39 armor, 40 offhand. */
+  items: (ItemInfo & { slot: number })[];
+}
+
+export interface ContainerInfo {
+  /** A container other than the player's own inventory is open. */
+  open: boolean;
+  containerId?: number;
+  /** Menu type, e.g. "minecraft:generic_9x3" for a chest. */
+  type?: string | null;
+  title?: string;
+  /** Total slots; slots 0..containerSlots-1 belong to the container, the rest to the player. */
+  size?: number;
+  containerSlots?: number;
+  /** Non-empty slots (menu slot index; inventorySlot for the player's own slots). */
+  items?: (ItemInfo & { slot: number; inventorySlot?: number })[];
+  /** Stack held by the cursor. */
+  carried?: ItemInfo;
 }
 
 export interface GameState {
@@ -744,6 +836,100 @@ export class Client extends EventEmitter {
 
   async respawn(): Promise<void> {
     await this.requireProbe().request('respawn');
+  }
+
+  // ------------------------------------------------------------------ actions
+
+  /** Turns the player to an absolute rotation (degrees; yaw 0 = south, pitch -90 = up) or towards a point. */
+  async look(to: { yaw?: number; pitch?: number } | { x: number; y: number; z: number }): Promise<{ yaw: number; pitch: number }> {
+    return this.requireProbe().request('look', to);
+  }
+
+  /**
+   * Holds movement controls until changed (or for {@code ticks} game ticks, 20 per second). Pass false to release
+   * a control; {@link stop} releases all of them.
+   */
+  async move(controls: MoveControls, opts: { ticks?: number } = {}): Promise<MoveControls & { releaseInTicks?: number }> {
+    return this.requireProbe().request('move', { ...controls, ticks: opts.ticks ?? 0 });
+  }
+
+  /** Releases every control and cancels a running walkTo/dig/held use. */
+  async stopActions(): Promise<void> {
+    await this.requireProbe().request('stop');
+  }
+
+  /**
+   * Walks in a straight line to (x, z), jumping over single blocks and swimming. Resolves when within
+   * {@code range} blocks, or with {@code arrived: false} when stuck (no progress for 3 s) or timed out.
+   * There is no path finding: route around obstacles with intermediate points.
+   */
+  async walkTo(x: number, z: number, opts: { range?: number; sprint?: boolean; timeoutMs?: number } = {}): Promise<WalkResult> {
+    const timeoutMs = opts.timeoutMs ?? 60_000;
+    return this.requireProbe().request('walk_to', { x, z, range: opts.range ?? 0.5, sprint: opts.sprint ?? true, timeoutMs }, timeoutMs + 15_000);
+  }
+
+  /** Left click: attacks the entity (facing it first) or whatever the crosshair points at. */
+  async attack(entityId?: number): Promise<HitTarget> {
+    return this.requireProbe().request('attack', entityId === undefined ? {} : { entityId });
+  }
+
+  /**
+   * Right click: interacts with an entity, a block (opening chests, pressing buttons, placing the held block
+   * against that face) or, with no target, whatever the crosshair points at / the held item in the air.
+   * {@code holdTicks} keeps the button pressed afterwards (eating, drinking, drawing a bow, shields).
+   */
+  async use(target: { entityId?: number; block?: BlockPosition & { face?: BlockFace }; holdTicks?: number } = {}): Promise<HitTarget> {
+    const { block, ...rest } = target;
+    return this.requireProbe().request('use', { ...rest, ...(block ?? {}) });
+  }
+
+  /** Mines a block like a player (holding left click, taking the real break time). */
+  async dig(block: BlockPosition & { face?: BlockFace }, opts: { timeoutMs?: number } = {}): Promise<DigResult> {
+    const timeoutMs = opts.timeoutMs ?? 30_000;
+    return this.requireProbe().request('dig', { ...block, timeoutMs }, timeoutMs + 15_000);
+  }
+
+  /** The block at a position as the client sees it. */
+  async block(pos: BlockPosition): Promise<BlockInfo> {
+    return this.requireProbe().request('block', { ...pos });
+  }
+
+  /** What the crosshair points at. */
+  async target(): Promise<HitTarget> {
+    return this.requireProbe().request('target');
+  }
+
+  async inventory(): Promise<InventoryInfo> {
+    return this.requireProbe().request('inventory');
+  }
+
+  /** Selects hotbar slot 0-8. */
+  async selectSlot(slot: number): Promise<{ selected: number; item: ItemInfo | null }> {
+    return this.requireProbe().request('select_slot', { slot });
+  }
+
+  /** The open container (chest, furnace, villager trade, ...) or the inventory; {@code waitMs} waits for one to open. */
+  async container(opts: { waitMs?: number } = {}): Promise<ContainerInfo> {
+    const waitMs = opts.waitMs ?? 0;
+    return this.requireProbe().request('container', { waitMs }, waitMs + 15_000);
+  }
+
+  /**
+   * Clicks a slot of the open container (or the inventory). Modes: pickup (default; button 0 left, 1 right),
+   * quick_move (shift click), swap (button = hotbar slot 0-8 or 40 for the offhand), clone, throw (button 1 =
+   * whole stack), quick_craft, pickup_all. Slot -999 is outside the window.
+   */
+  async click(slot: number, opts: { button?: number; mode?: ClickMode } = {}): Promise<ContainerInfo> {
+    return this.requireProbe().request('click', { slot, button: opts.button ?? 0, mode: opts.mode ?? 'pickup' });
+  }
+
+  async closeContainer(): Promise<void> {
+    await this.requireProbe().request('close_container');
+  }
+
+  /** Drops one item (or the whole stack) from the selected hotbar slot. */
+  async drop(opts: { all?: boolean } = {}): Promise<ItemInfo> {
+    return this.requireProbe().request('drop', { all: !!opts.all });
   }
 
   async setRender(enabled: boolean): Promise<void> {

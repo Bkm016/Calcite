@@ -3,7 +3,7 @@ import { writeFile } from 'node:fs/promises';
 import { createInterface } from 'node:readline';
 import { Command, InvalidArgumentError, Option } from 'commander';
 import { listAccounts, removeAccount, startLogin } from './accounts.js';
-import { Client, defaultUsername, installVersion, type Account, type RenderMode } from './client.js';
+import { Client, defaultUsername, installVersion, type Account, type ClickMode, type RenderMode } from './client.js';
 import { hasSharedLib, which } from './display.js';
 import { findJavaInstalls } from './java.js';
 import { setLogLevel } from './log.js';
@@ -24,6 +24,83 @@ function fail(err: unknown): never {
   const e = err as Error & { code?: string };
   process.stderr.write(`error${e.code ? ` [${e.code}]` : ''}: ${e.message}\n`);
   process.exit(1);
+}
+
+const json = (value: unknown) => out(JSON.stringify(value, null, 2));
+
+/** Interactive action commands of `calcite launch`; returns false for unknown commands. */
+async function action(client: Client, line: string): Promise<boolean> {
+  const [cmd, ...rest] = line.slice(1).split(/\s+/);
+  const n = rest.map(Number);
+  const need = (count: number) => {
+    if (n.length < count || n.slice(0, count).some((v) => !Number.isFinite(v))) throw new Error(`:${cmd} needs ${count} numbers`);
+  };
+  switch (cmd) {
+    case 'look':
+      need(2);
+      json(await client.look({ yaw: n[0], pitch: n[1] }));
+      return true;
+    case 'lookat':
+      need(3);
+      json(await client.look({ x: n[0], y: n[1], z: n[2] }));
+      return true;
+    case 'goto':
+      need(2);
+      json(await client.walkTo(n[0], n[1]));
+      return true;
+    case 'move': {
+      const controls = Object.fromEntries((rest[0] ?? '').split(',').filter(Boolean).map((c) => [c, true]));
+      json(await client.move(controls, { ticks: rest[1] ? Number(rest[1]) : 20 }));
+      return true;
+    }
+    case 'stop':
+      await client.stopActions();
+      return true;
+    case 'attack':
+      json(await client.attack(rest[0] ? Number(rest[0]) : undefined));
+      return true;
+    case 'use':
+      if (rest.length >= 3) {
+        need(3);
+        json(await client.use({ block: { x: n[0], y: n[1], z: n[2] }, holdTicks: n[3] || undefined }));
+      } else {
+        json(await client.use({ entityId: rest[0] ? n[0] : undefined, holdTicks: n[1] || undefined }));
+      }
+      return true;
+    case 'dig':
+      need(3);
+      json(await client.dig({ x: n[0], y: n[1], z: n[2] }));
+      return true;
+    case 'block':
+      need(3);
+      json(await client.block({ x: n[0], y: n[1], z: n[2] }));
+      return true;
+    case 'target':
+      json(await client.target());
+      return true;
+    case 'inv':
+      json(await client.inventory());
+      return true;
+    case 'slot':
+      need(1);
+      json(await client.selectSlot(n[0]));
+      return true;
+    case 'container':
+      json(await client.container());
+      return true;
+    case 'click':
+      need(1);
+      json(await client.click(n[0], { button: rest[1] ? n[1] : 0, mode: (rest[2] as ClickMode) ?? 'pickup' }));
+      return true;
+    case 'close':
+      await client.closeContainer();
+      return true;
+    case 'drop':
+      json(await client.drop({ all: rest[0] === 'all' }));
+      return true;
+    default:
+      return false;
+  }
 }
 
 const program = new Command()
@@ -81,7 +158,11 @@ program
       await client.stop();
       fail(err);
     }
-    process.stderr.write('Ready. Type chat, /command, or :state :ents [radius] :shot [file] :render on|off :respawn :quit\n');
+    process.stderr.write(
+      'Ready. Type chat, /command, or :state :ents [radius] :shot [file] :render on|off :respawn :quit\n' +
+        'Actions: :look yaw pitch | :lookat x y z | :goto x z | :move forward,jump [ticks] | :stop | :attack [id] | :use [id | x y z] [hold]\n' +
+        '         :dig x y z | :block x y z | :target | :inv | :slot n | :container | :click slot [button] [mode] | :close | :drop [all]\n',
+    );
     const rl = createInterface({ input: process.stdin });
     rl.on('close', () => void stop());
     for await (const raw of rl) {
@@ -103,7 +184,9 @@ program
         } else if (line.startsWith(':render')) {
           await client.setRender(line.endsWith('on'));
         } else if (line === ':respawn') await client.respawn();
-        else if (line.startsWith('/')) await client.command(line.slice(1));
+        else if (line.startsWith(':') && (await action(client, line))) {
+          // handled
+        } else if (line.startsWith('/')) await client.command(line.slice(1));
         else if (line.startsWith(':')) process.stderr.write(`unknown command ${line}\n`);
         else await client.chat(line);
       } catch (err) {

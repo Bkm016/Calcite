@@ -40,6 +40,7 @@ Calcite 用于以编程方式驱动**真实的 Minecraft Java 版客户端**。�
 - **跨平台**：Linux、Windows、macOS。
 - **账号**：支持离线账号，也支持微软正版账号。正版账号使用设备码登录，凭据持久保存并自动刷新。
 - **无显卡环境截图**：在 Linux 服务器上通过 Xvfb 与 Mesa 软件渲染完成截图。
+- **玩家操作**：转向、移动、寻路到坐标、攻击、使用物品与方块、挖掘、切换快捷栏、丢弃物品，以及打开箱子等容器并点击槽位。操作走原版客户端逻辑，与真实玩家输入等价。
 - **按需渲染**：默认不渲染画面，截图时临时渲染。单次截图约 0.5 秒，进服后首次截图需等待区块编译，约 2–4 秒。
 - **Java 自动管理**：按游戏版本自动选择 Java；本机缺少时从 Eclipse Adoptium 下载 Temurin，并校验 SHA-256。
 - **自动重连**：掉线或崩溃后按指数退避自动重连。
@@ -91,6 +92,18 @@ calcite launch play.example.com -V 1.21.11 -n Bot1
 | `:shot [文件]` | 截图并保存为 PNG |
 | `:render on\|off` | 开启或关闭持续渲染 |
 | `:respawn` | 死亡后重生 |
+| `:look <yaw> <pitch>` / `:lookat <x> <y> <z>` | 设置视角 / 看向坐标 |
+| `:goto <x> <z>` | 直线走到指定坐标，遇到台阶自动跳跃 |
+| `:move <按键,...> [tick]` | 按住按键若干 tick（默认 20），按键为 `forward`、`back`、`left`、`right`、`jump`、`sneak`、`sprint`、`attack`、`use` |
+| `:stop` | 停止当前移动、挖掘等持续操作 |
+| `:attack [实体ID]` | 攻击指定实体；省略时攻击准星所指 |
+| `:use [实体ID \| x y z] [tick]` | 右键实体或方块；省略目标时使用手中物品，可指定按住时长 |
+| `:dig <x> <y> <z>` | 挖掘方块直至破坏 |
+| `:block <x> <y> <z>` / `:target` | 查看方块 / 查看准星目标 |
+| `:inv` / `:slot <0-8>` | 查看背包 / 切换快捷栏 |
+| `:container` / `:close` | 查看 / 关闭当前打开的容器 |
+| `:click <槽位> [按键] [模式]` | 点击容器槽位，模式见下文 |
+| `:drop [all]` | 丢弃手中物品（`all` 丢弃整组） |
 | `:quit` | 退出并关闭客户端 |
 
 ### 命令一览
@@ -167,6 +180,21 @@ claude mcp add calcite -- npx -y @bkm016/calcite mcp
 | `get_logs` | 获取游戏日志与 Calcite 日志，用于排查崩溃 |
 | `set_render` | 开启或关闭持续渲染 |
 | `respawn` | 死亡后重生 |
+| `look` | 设置视角，或看向指定坐标 |
+| `walk_to` | 直线走到指定坐标，遇障碍自动跳跃，返回是否到达 |
+| `move` | 按住移动、跳跃、潜行、疾跑等按键若干 tick |
+| `stop_actions` | 停止所有持续操作并松开按键 |
+| `attack` | 攻击实体（按 ID 或准星目标） |
+| `use` | 右键：使用手中物品、与方块交互（开箱、放置）、与实体交互 |
+| `dig` | 挖掘方块直至破坏 |
+| `get_block` | 查询方块 ID 与方块状态 |
+| `get_target` | 查询准星所指的方块或实体 |
+| `get_inventory` | 查询背包、快捷栏与手持物品 |
+| `select_slot` | 切换快捷栏槽位 |
+| `get_container` | 查询当前打开的容器（类型、标题、槽位物品） |
+| `click_slot` | 点击容器槽位，支持拾取、快速移动、数字键交换、丢弃等模式 |
+| `close_container` | 关闭当前容器 |
+| `drop_item` | 丢弃手中物品 |
 | `install_version` | 预下载指定版本 |
 | `list_versions` | 列出可用版本 |
 | `account_login_start` | 开始微软账号登录，返回验证链接 |
@@ -231,8 +259,36 @@ await bot.stop();
 | `waitFor(cond, timeoutMs)` | 等待聊天、实体或阶段条件 |
 | `setRender(enabled)` / `respawn()` | 切换持续渲染 / 重生 |
 | `chatSince(seq)` / `logsSince(opts)` | 读取聊天与日志缓冲 |
+| `look({ yaw, pitch } \| { x, y, z })` | 设置视角或看向坐标 |
+| `walkTo(x, z, { range, sprint, timeoutMs })` | 走到坐标，返回 `{ arrived, reason?, distance, x, y, z }` |
+| `move(controls, { ticks })` / `stopActions()` | 按住按键若干 tick / 停止所有持续操作 |
+| `attack(entityId?)` | 攻击实体，省略时攻击准星目标 |
+| `use({ entityId?, block?, holdTicks? })` | 右键实体、方块或使用手中物品 |
+| `dig(block, { timeoutMs })` | 挖掘方块，返回 `{ broken, block, ticks?, reason? }` |
+| `block(pos)` / `target()` | 查询方块 / 准星目标 |
+| `inventory()` / `selectSlot(n)` | 查询背包 / 切换快捷栏 |
+| `container({ waitMs })` / `closeContainer()` | 查询 / 关闭当前容器 |
+| `click(slot, { button, mode })` | 点击容器槽位 |
+| `drop({ all })` | 丢弃手中物品 |
 
 事件：`phase`、`state`、`chat`、`log`、`exit`。
+
+### 玩家操作示例
+
+```js
+await bot.walkTo(100.5, 200.5);                             // 走到 (100.5, 200.5)
+await bot.dig({ x: 101, y: 64, z: 200 });                   // 挖掉一个方块
+await bot.use({ block: { x: 100, y: 64, z: 202 } });        // 右键打开箱子
+const chest = await bot.container({ waitMs: 3000 });        // 等待容器界面打开
+for (const item of chest.items.filter((i) => i.slot < chest.containerSlots)) {
+  await bot.click(item.slot, { mode: 'quick_move' });       // Shift+点击 取出物品
+}
+await bot.closeContainer();
+```
+
+容器槽位编号与原版一致：容器自身的槽位在前（`0` 到 `containerSlots - 1`），玩家背包在后；`item.inventorySlot` 给出对应的背包槽位。`click` 的 `mode` 可取 `pickup`（默认，`button` 0 为左键、1 为右键）、`quick_move`（Shift+点击）、`swap`（数字键，`button` 为快捷栏序号 0–8）、`clone`、`throw`、`quick_craft`、`pickup_all`；槽位 `-999` 表示点击界面外部。未打开容器时，`click` 作用于玩家自身的背包界面。
+
+操作有距离限制（6 格）：目标过远时返回 `out_of_reach` 错误，需先用 `walkTo` 靠近。
 
 此外还导出 `ClientManager`（多客户端管理）、`installVersion`、`startLogin`、`listAccounts`、`removeAccount` 等函数，类型定义随包发布。
 
@@ -259,7 +315,7 @@ HeadlessMC 仅允许离线账号在 Linux 虚拟显示器中渲染。这是上�
 
 | 版本范围 | 支持情况 |
 | --- | --- |
-| 1.14.4 及以上 | 全部功能（状态、实体、聊天、指令、截图） |
+| 1.14.4 及以上 | 全部功能（状态、实体、聊天、指令、截图、玩家操作） |
 | 1.14.4 以前 | 可以启动并进入服务器；Mojang 未发布这些版本的映射表，探针功能不可用 |
 
 已验证的版本：1.16.5、1.20.4、1.21.11、26.3。
