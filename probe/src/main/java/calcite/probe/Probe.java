@@ -39,6 +39,10 @@ public final class Probe {
     private final ScheduledExecutorService timer = Executors.newSingleThreadScheduledExecutor(daemon("calcite-probe-timer"));
     private volatile Game game;
     private volatile Actions actions;
+    private volatile World world;
+    private volatile Inventory inventory;
+    private volatile Session session;
+    private volatile Render render;
     private volatile String initError;
     private Mappings mappings;
     private final Object writeLock = new Object();
@@ -156,8 +160,14 @@ public final class Probe {
             while (g.minecraft() == null) {
                 sleep(250);
             }
-            final Actions a = new Actions(g, ref);
+            World w = new World(g, ref);
+            final Actions a = new Actions(g, ref, w);
+            final Render r = new Render(g, ref);
+            world = w;
             actions = a;
+            inventory = new Inventory(g, ref, w);
+            session = new Session(g, ref);
+            render = r;
             game = g;
             timer.scheduleAtFixedRate(new Runnable() {
                 @Override
@@ -170,13 +180,13 @@ public final class Probe {
                 }
             }, 10, 10, TimeUnit.MILLISECONDS);
             if ("off".equals(args.get("render")) && !g.headless()) {
-                g.setRender(false);
+                r.setRender(false);
             }
             timer.scheduleAtFixedRate(new Runnable() {
                 @Override
                 public void run() {
                     try {
-                        game.enforceRender();
+                        r.enforceRender();
                     } catch (Throwable ignored) {
                         // keep the timer alive
                     }
@@ -257,7 +267,7 @@ public final class Probe {
             info.put("obfuscated", mappings != null && !mappings.isIdentity());
             if (game != null) {
                 info.put("headless", game.headless());
-                info.put("renderToggle", game.renderToggleSupported());
+                info.put("renderToggle", render.renderToggleSupported());
             }
             return info;
         }
@@ -275,29 +285,29 @@ public final class Probe {
             return g.entities(num(a.get("radius"), 0), (int) num(a.get("limit"), 0), Boolean.TRUE.equals(a.get("includeSelf")));
         }
         if ("chat".equals(op)) {
-            g.chat(str(a, "message"));
+            session.chat(str(a, "message"));
             return true;
         }
         if ("command".equals(op)) {
-            g.command(str(a, "command"));
+            session.command(str(a, "command"));
             return true;
         }
         if ("render".equals(op)) {
             if (g.headless()) {
                 throw new Game.ProbeException("headless", "The client runs without a renderer (headless)");
             }
-            g.setRender(Boolean.TRUE.equals(a.get("enabled")));
+            render.setRender(Boolean.TRUE.equals(a.get("enabled")));
             return true;
         }
         if ("screenshot".equals(op)) {
-            return g.screenshot(str(a, "name"), (int) num(a.get("settleFrames"), 3), (long) num(a.get("timeoutMs"), 20000));
+            return render.screenshot(str(a, "name"), (int) num(a.get("settleFrames"), 3), (long) num(a.get("timeoutMs"), 20000));
         }
         if ("connect".equals(op)) {
-            g.connect(str(a, "host"), (int) num(a.get("port"), 25565));
+            session.connect(str(a, "host"), (int) num(a.get("port"), 25565));
             return true;
         }
         if ("respawn".equals(op)) {
-            g.respawn();
+            session.respawn();
             return true;
         }
         Actions act = actions;
@@ -326,30 +336,30 @@ public final class Probe {
             return act.dig(pos(a), (String) a.get("face"), (long) num(a.get("timeoutMs"), 30000));
         }
         if ("block".equals(op)) {
-            return act.block(pos(a));
+            return world.block(pos(a));
         }
         if ("target".equals(op)) {
-            return act.target();
+            return world.target();
         }
         if ("inventory".equals(op)) {
-            return act.inventory();
+            return inventory.inventory();
         }
         if ("select_slot".equals(op)) {
-            return act.selectSlot((int) num(a.get("slot"), -1));
+            return inventory.selectSlot((int) num(a.get("slot"), -1));
         }
         if ("container".equals(op)) {
-            return act.container((long) num(a.get("waitMs"), 0));
+            return inventory.container((long) num(a.get("waitMs"), 0));
         }
         if ("click".equals(op)) {
             Object mode = a.get("mode");
-            return act.click((int) num(a.get("slot"), -1), (int) num(a.get("button"), 0), mode instanceof String ? (String) mode : "pickup");
+            return inventory.click((int) num(a.get("slot"), -1), (int) num(a.get("button"), 0), mode instanceof String ? (String) mode : "pickup");
         }
         if ("close_container".equals(op)) {
-            act.closeContainer();
+            inventory.closeContainer();
             return true;
         }
         if ("drop".equals(op)) {
-            return act.drop(Boolean.TRUE.equals(a.get("all")));
+            return inventory.drop(Boolean.TRUE.equals(a.get("all")));
         }
         throw new Game.ProbeException("unknown_op", "Unknown operation: " + op);
     }

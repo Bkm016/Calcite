@@ -1,5 +1,6 @@
 package calcite.probe;
 
+import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
@@ -10,6 +11,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+
+import calcite.probe.Game.ProbeException;
 
 /**
  * Reflection by official (Mojang) names, resolved through {@link Mappings}.
@@ -271,5 +274,63 @@ public final class Ref {
     /** True when {@code target} has a method with that official name and parameter count. */
     public boolean has(Object target, String name, int paramCount) {
         return target != null && method(target.getClass(), name, paramCount) != null;
+    }
+
+    /** Sets a field when this version has it. */
+    public void setIfPresent(Object target, String name, Object value) throws ReflectiveOperationException {
+        Field f = field(target.getClass(), name);
+        if (f != null) {
+            f.set(target, value);
+        }
+    }
+
+    /** Calls a no-argument method, failing with an "unsupported" error when this version lacks it. */
+    public Object callOrFail(Object target, String name) throws Exception {
+        Method m = method(target.getClass(), name, 0);
+        if (m == null) {
+            throw new ProbeException("unsupported", simpleNamed(target.getClass()) + "#" + name + " is not available in this version");
+        }
+        try {
+            return m.invoke(target);
+        } catch (java.lang.reflect.InvocationTargetException e) {
+            Throwable cause = e.getCause();
+            throw cause instanceof Exception ? (Exception) cause : new RuntimeException(cause);
+        }
+    }
+
+    /** {@code new named(args)}, picking the constructor whose parameters accept the arguments. */
+    public Object construct(String named, Object... args) throws Exception {
+        Class<?> k = cls(named);
+        if (k == null) {
+            throw new ProbeException("unsupported", named + " not found");
+        }
+        for (Constructor<?> c : k.getDeclaredConstructors()) {
+            Class<?>[] types = c.getParameterTypes();
+            if (types.length != args.length) {
+                continue;
+            }
+            boolean fits = true;
+            for (int i = 0; i < types.length && fits; i++) {
+                fits = accepts(types[i], args[i]);
+            }
+            if (fits) {
+                c.setAccessible(true);
+                return c.newInstance(args);
+            }
+        }
+        throw new ProbeException("unsupported", "No matching constructor for " + named);
+    }
+
+    private static boolean accepts(Class<?> type, Object arg) {
+        if (!type.isPrimitive()) {
+            return arg == null || type.isInstance(arg);
+        }
+        return (type == int.class && arg instanceof Integer) || (type == double.class && arg instanceof Double)
+                || (type == float.class && arg instanceof Float) || (type == boolean.class && arg instanceof Boolean)
+                || (type == long.class && arg instanceof Long);
+    }
+
+    static int intValue(Object v, int def) {
+        return v instanceof Number ? ((Number) v).intValue() : def;
     }
 }
