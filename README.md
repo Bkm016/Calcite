@@ -334,6 +334,12 @@ calcite install 1.21.11 -l neoforge
 new Client({ version: '1.21.11', loader: 'fabric', mods: ['modrinth:fabric-api', './my-mod.jar'] });
 ```
 
+<p align="center">
+  <img src="docs/images/mods-fabric.jpg" alt="Fabric 1.21.11：Xaero's Minimap 与 Jade" width="49%">
+  <img src="docs/images/mods-neoforge.jpg" alt="NeoForge 1.21.11：JEI 物品列表" width="49%">
+</p>
+<p align="center"><sub>左：Fabric 1.21.11，加载 Fabric API、Xaero's Minimap、Jade、Mod Menu，准星对准羊时 Jade 显示其信息。右：NeoForge 1.21.11，加载 JEI 与 Xaero's Minimap，通过 <code>use</code> 打开箱子后右侧为 JEI 物品列表。模组均以 <code>modrinth:</code> 参数自动下载。</sub></p>
+
 - 加载器由 HeadlessMC 安装到共享的 `minecraft/versions/`，省略版本时使用最新版本（已安装过则复用本地最新版）。
 - 模组来源：本地 jar、包含 jar 的目录、http(s) URL，或 `modrinth:<项目>[@<版本号>]`。Modrinth 模组按游戏版本与加载器挑选最新正式版，并自动下载必需的前置模组；下载文件按哈希校验并缓存在 `mods/`。
 - 模组复制到实例的 `mods/` 目录。Calcite 只管理自己放入的文件（记录在 `mods/.calcite-mods.json`），手动放入的模组不受影响。
