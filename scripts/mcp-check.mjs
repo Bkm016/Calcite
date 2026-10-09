@@ -5,12 +5,19 @@ import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { writeFile } from 'node:fs/promises';
 
 const [server, version = '1.21.11'] = process.argv.slice(2);
-const transport = new StdioClientTransport({ command: process.execPath, args: [new URL('../dist/cli.js', import.meta.url).pathname, 'mcp'], stderr: 'inherit' });
+const transport = new StdioClientTransport({
+  command: process.execPath,
+  args: [new URL('../dist/cli.js', import.meta.url).pathname, 'mcp'],
+  stderr: 'inherit',
+});
 const mcp = new Client({ name: 'mcp-check', version: '0' });
 await mcp.connect(transport);
 const call = async (name, args = {}) => {
   const r = await mcp.callTool({ name, arguments: args }, undefined, { timeout: 20 * 60_000 });
-  const t = r.content.filter((c) => c.type === 'text').map((c) => c.text).join('\n');
+  const t = r.content
+    .filter((c) => c.type === 'text')
+    .map((c) => c.text)
+    .join('\n');
   console.log(`--- ${name}${r.isError ? ' (ERROR)' : ''}: ${t.slice(0, 600)}`);
   return r;
 };

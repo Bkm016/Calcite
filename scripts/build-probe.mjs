@@ -33,15 +33,20 @@ function main() {
   rmSync(out, { recursive: true, force: true });
   mkdirSync(out, { recursive: true });
   mkdirSync(dirname(jarFile), { recursive: true });
-  execFileSync(jdkTool('javac'), ['--release', '8', '-Xlint:-options', '-encoding', 'UTF-8', '-d', out, ...listJava(src)], { stdio: 'inherit' });
+  execFileSync(jdkTool('javac'), ['--release', '8', '-Xlint:-options', '-encoding', 'UTF-8', '-d', out, ...listJava(src)], {
+    stdio: 'inherit',
+  });
   const manifest = join(root, 'probe', 'build', 'MANIFEST.MF');
-  writeFileSync(manifest, [
-    'Manifest-Version: 1.0',
-    'Premain-Class: calcite.probe.Probe',
-    'Agent-Class: calcite.probe.Probe',
-    'Implementation-Title: calcite-probe',
-    '',
-  ].join('\n'));
+  writeFileSync(
+    manifest,
+    [
+      'Manifest-Version: 1.0',
+      'Premain-Class: calcite.probe.Probe',
+      'Agent-Class: calcite.probe.Probe',
+      'Implementation-Title: calcite-probe',
+      '',
+    ].join('\n'),
+  );
   rmSync(jarFile, { force: true });
   execFileSync(jdkTool('jar'), ['cfm', jarFile, manifest, '-C', out, '.'], { stdio: 'inherit' });
   console.log(`built ${jarFile}`);

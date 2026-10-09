@@ -25,7 +25,9 @@ export function registerObserveTools({ server, manager }: ToolContext): void {
         'Finds loaded blocks by id or pattern around the player, nearest first: "oak_log", "*_ore", "minecraft:*planks". Use with walk_to and dig to gather resources.',
       inputSchema: {
         client: clientName,
-        blocks: z.union([z.string(), z.array(z.string()).min(1)]).describe('Block ids or patterns ("*" matches anything; "minecraft:" is implied)'),
+        blocks: z
+          .union([z.string(), z.array(z.string()).min(1)])
+          .describe('Block ids or patterns ("*" matches anything; "minecraft:" is implied)'),
         radius: z.number().int().min(1).max(128).default(32).describe('Search radius around the player in blocks'),
         limit: z.number().int().positive().max(256).default(16),
       },
@@ -50,14 +52,22 @@ export function registerObserveTools({ server, manager }: ToolContext): void {
   tool(
     server,
     'get_block',
-    { title: 'Block at a position', description: 'Block id and state properties at x/y/z as the client sees them.', inputSchema: { client: clientName, x: coord, y: coord, z: coord } },
+    {
+      title: 'Block at a position',
+      description: 'Block id and state properties at x/y/z as the client sees them.',
+      inputSchema: { client: clientName, x: coord, y: coord, z: coord },
+    },
     async ({ client, ...pos }) => manager.resolve(client).block(pos),
   );
 
   tool(
     server,
     'get_target',
-    { title: 'Crosshair target', description: 'The block (with face) or entity the crosshair points at.', inputSchema: { client: clientName } },
+    {
+      title: 'Crosshair target',
+      description: 'The block (with face) or entity the crosshair points at.',
+      inputSchema: { client: clientName },
+    },
     async ({ client }) => manager.resolve(client).target(),
   );
 
@@ -96,9 +106,13 @@ export function registerObserveTools({ server, manager }: ToolContext): void {
     {
       title: 'Chat history',
       description: 'Chat lines received by the client. Pass the last seen seq as "since" to get only new lines.',
-      inputSchema: { client: clientName, since: z.number().int().nonnegative().optional(), limit: z.number().int().positive().max(1000).default(50) },
+      inputSchema: {
+        client: clientName,
+        since: z.number().int().nonnegative().optional(),
+        limit: z.number().int().positive().max(1000).default(50),
+      },
     },
-    async ({ client, since, limit }) => manager.resolve(client).chatSince(since ?? 0, limit),
+    ({ client, since, limit }) => manager.resolve(client).chatSince(since ?? 0, limit),
   );
 
   tool(
@@ -115,7 +129,7 @@ export function registerObserveTools({ server, manager }: ToolContext): void {
         limit: z.number().int().positive().max(1000).default(50),
       },
     },
-    async ({ client, ...query }) => manager.resolve(client).eventsSince(query),
+    ({ client, ...query }) => manager.resolve(client).eventsSince(query),
   );
 
   tool(
@@ -127,14 +141,18 @@ export function registerObserveTools({ server, manager }: ToolContext): void {
       inputSchema: {
         client: clientName,
         chat: z.string().optional().describe('Case-insensitive regular expression matched against new chat lines'),
-        event: z.string().optional().describe('Regular expression matched against the names of new game events, e.g. "player.hurt|player.death"'),
+        event: z
+          .string()
+          .optional()
+          .describe('Regular expression matched against the names of new game events, e.g. "player.hurt|player.death"'),
         entity: z.object({ ...entityFilter, present: z.boolean().optional().describe('false waits for it to disappear') }).optional(),
         phase: z.enum(['in_game', 'disconnected', 'reconnecting', 'crashed', 'stopped']).optional(),
         timeoutSeconds: timeoutSeconds(30),
       },
     },
     async ({ client, timeoutSeconds: seconds, ...cond }) => {
-      if (!cond.chat && !cond.event && !cond.entity && !cond.phase) throw new CalciteError('bad_condition', 'Give chat, event, entity or phase');
+      if (!cond.chat && !cond.event && !cond.entity && !cond.phase)
+        throw new CalciteError('bad_condition', 'Give chat, event, entity or phase');
       return manager.resolve(client).waitFor(cond, seconds * 1000);
     },
   );
@@ -153,6 +171,6 @@ export function registerObserveTools({ server, manager }: ToolContext): void {
         source: z.enum(['game', 'calcite']).optional(),
       },
     },
-    async ({ client, ...query }) => manager.resolve(client).logsSince(query),
+    ({ client, ...query }) => manager.resolve(client).logsSince(query),
   );
 }

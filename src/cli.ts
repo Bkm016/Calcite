@@ -29,13 +29,28 @@ function collect(value: string, previous: string[]): string[] {
   return [...previous, value];
 }
 
+interface LaunchOptions {
+  name: string;
+  mcVersion: string;
+  loader?: string;
+  mod: string[];
+  ext: string[];
+  username?: string;
+  microsoft?: string | true;
+  render: RenderMode;
+  java?: string;
+  javaDownload: boolean;
+  memory: string;
+  reconnect: boolean;
+}
+
 const program = new Command()
   .name('calcite')
   .description('Run real Minecraft clients headlessly for testing and AI agents')
   .version(VERSION, '--version') // -V is the launch command's --mc-version
   .option('-v, --verbose', 'debug logging')
   .hook('preAction', (cmd) => {
-    if (cmd.opts().verbose) setLogLevel('debug');
+    if (cmd.opts<{ verbose?: boolean }>().verbose) setLogLevel('debug');
   });
 
 program
@@ -54,7 +69,7 @@ program
   .option('--no-java-download', 'never download a Java runtime')
   .option('--memory <size>', 'max heap, e.g. 2G', '2G')
   .option('--no-reconnect', 'do not rejoin after a disconnect or crash')
-  .action(async (server: string | undefined, o) => {
+  .action(async (server: string | undefined, o: LaunchOptions) => {
     const account: Account = o.microsoft
       ? { type: 'microsoft', name: typeof o.microsoft === 'string' ? o.microsoft : undefined }
       : { type: 'offline', username: o.username ?? defaultUsername(o.name) };
@@ -66,7 +81,7 @@ program
       extensions: o.ext,
       server,
       account,
-      render: o.render as RenderMode,
+      render: o.render,
       javaPath: o.java,
       allowJavaDownload: o.javaDownload,
       memory: o.memory,
@@ -87,7 +102,12 @@ program
     try {
       await client.start();
     } catch (err) {
-      process.stderr.write(client.logsSince({ limit: 30 }).map((l) => `  ${l.line}`).join('\n') + '\n');
+      process.stderr.write(
+        client
+          .logsSince({ limit: 30 })
+          .map((l) => `  ${l.line}`)
+          .join('\n') + '\n',
+      );
       await client.stop();
       fail(err);
     }
@@ -101,7 +121,7 @@ program
   .argument('[version]', 'version id, "release" or "snapshot"', 'release')
   .option('-l, --loader <loader>', 'also install a mod loader: fabric, forge or neoforge, optionally @version')
   .option('--java <path>', 'java executable to use')
-  .action(async (version: string, o) => {
+  .action(async (version: string, o: { loader?: string; java?: string }) => {
     try {
       const r = await installVersion(version, { loader: o.loader, javaPath: o.java, onLine: (l) => process.stderr.write(`  ${l}\n`) });
       out(`installed ${r.id}${r.loader ? ` with ${r.loader}` : ''} (java ${r.java}; probe ${r.probe})`);
@@ -113,9 +133,11 @@ program
 program
   .command('versions')
   .description('List Minecraft versions')
-  .addOption(new Option('-t, --type <type>', 'version type').choices(['release', 'snapshot', 'old_beta', 'old_alpha', 'all']).default('release'))
+  .addOption(
+    new Option('-t, --type <type>', 'version type').choices(['release', 'snapshot', 'old_beta', 'old_alpha', 'all']).default('release'),
+  )
   .option('-l, --limit <n>', 'how many', positiveInt, 20)
-  .action(async (o) => {
+  .action(async (o: { type: string; limit: number }) => {
     try {
       const manifest = await getManifest(resolvePaths());
       out(`latest release ${manifest.latest.release}, snapshot ${manifest.latest.snapshot}`);
@@ -160,7 +182,8 @@ program
   .argument('<account>', 'profile name')
   .action(async (name: string) => {
     try {
-      if (!(await removeAccount(resolvePaths(), name))) fail(Object.assign(new Error(`No saved account named "${name}"`), { code: 'unknown_account' }));
+      if (!(await removeAccount(resolvePaths(), name)))
+        fail(Object.assign(new Error(`No saved account named "${name}"`), { code: 'unknown_account' }));
       out(`Removed ${name}`);
     } catch (err) {
       fail(err);
@@ -181,7 +204,9 @@ program
     if (process.platform === 'linux') {
       const xvfb = which('Xvfb');
       out(`xvfb:  ${xvfb ?? 'missing — needed for screenshots without a display (apt install xvfb libgl1-mesa-dri libegl1 libegl-mesa0)'}`);
-      out(`egl:   ${hasSharedLib('libEGL.so.1') ? 'ok' : 'missing — Minecraft 26.x needs it to render on Xvfb (apt install libegl1 libegl-mesa0)'}`);
+      out(
+        `egl:   ${hasSharedLib('libEGL.so.1') ? 'ok' : 'missing — Minecraft 26.x needs it to render on Xvfb (apt install libegl1 libegl-mesa0)'}`,
+      );
       out(`display: ${process.env.DISPLAY ?? 'none (a virtual one will be started)'}`);
     }
     try {
@@ -204,7 +229,7 @@ program
   .addOption(new Option('-r, --render <mode>', 'default renderer mode').choices(['on-demand', 'always', 'off']))
   .option('--memory <size>', 'default max heap')
   .option('--ext <jar>', 'probe extension jar or URL loaded into every client (repeatable)', collect, [])
-  .action(async (o) => {
+  .action(async (o: { render?: RenderMode; memory?: string; ext: string[] }) => {
     // stdout belongs to the protocol; logs go to stderr
     await runMcpStdio({ defaults: { render: o.render, memory: o.memory, extensions: o.ext.length ? o.ext : undefined } });
   });

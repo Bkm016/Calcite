@@ -23,7 +23,7 @@ export function text(value: unknown): Result {
 }
 
 export function failure(err: unknown): Result {
-  const code = err instanceof CalciteError ? err.code : (err as { code?: string })?.code;
+  const code = err instanceof CalciteError ? err.code : (err as { code?: string } | null)?.code;
   const message = err instanceof Error ? err.message : String(err);
   return { isError: true, content: [{ type: 'text', text: code ? `[${code}] ${message}` : message }] };
 }
@@ -50,7 +50,7 @@ export function tool<S extends z.ZodRawShape>(
   server: McpServer,
   name: string,
   config: ToolConfig<S>,
-  handler: (args: z.objectOutputType<S, z.ZodTypeAny>) => Promise<unknown>,
+  handler: (args: z.objectOutputType<S, z.ZodTypeAny>) => unknown,
 ): void {
   const callback = safe(async (args: z.objectOutputType<S, z.ZodTypeAny>) => text(await handler(args)));
   // the SDK computes the argument type through its own zod compatibility layer, which TypeScript cannot relate to S

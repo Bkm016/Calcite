@@ -233,7 +233,9 @@ export async function httpJson<T>(url: string): Promise<T> {
 }
 
 export async function hashFile(file: string, algorithm: 'sha1' | 'sha256'): Promise<string> {
-  return createHash(algorithm).update(await readFile(file)).digest('hex');
+  return createHash(algorithm)
+    .update(await readFile(file))
+    .digest('hex');
 }
 
 async function exists(file: string): Promise<boolean> {
@@ -252,14 +254,26 @@ export interface DownloadOptions {
   reuse?: boolean;
 }
 
+/** Describes the first given hash that {@code file} does not match; undefined when all match. */
+async function hashMismatch(file: string, opts: DownloadOptions): Promise<string | undefined> {
+  for (const [algorithm, label] of [
+    ['sha1', 'SHA-1'],
+    ['sha256', 'SHA-256'],
+  ] as const) {
+    const expected = opts[algorithm]?.toLowerCase();
+    if (!expected) continue;
+    const actual = await hashFile(file, algorithm);
+    if (actual !== expected) return `${label} mismatch: expected ${expected}, got ${actual}`;
+  }
+  return undefined;
+}
+
 /** Downloads to {@code dest} atomically (temp file + rename) and verifies the hash when given. */
 export async function download(url: string, dest: string, opts: DownloadOptions = {}): Promise<string> {
-  const { sha1, sha256, reuse = true } = opts;
-  if (reuse && (await exists(dest))) {
-    if (sha1 && (await hashFile(dest, 'sha1')) === sha1.toLowerCase()) return dest;
-    if (sha256 && (await hashFile(dest, 'sha256')) === sha256.toLowerCase()) return dest;
-    if (!sha1 && !sha256) return dest;
-    log.warn(`hash mismatch for existing ${dest}, downloading again`);
+  if ((opts.reuse ?? true) && (await exists(dest))) {
+    const mismatch = await hashMismatch(dest, opts);
+    if (!mismatch) return dest;
+    log.warn(`${mismatch} for existing ${dest}, downloading again`);
   }
   await mkdir(dirname(dest), { recursive: true });
   const tmp = `${dest}.${process.pid}.${Date.now()}.part`;
@@ -273,14 +287,8 @@ export async function download(url: string, dest: string, opts: DownloadOptions 
         if (size !== expected) throw new Error(`Truncated download of ${url}: ${size}/${expected} bytes`);
       }
     });
-    if (sha1) {
-      const actual = await hashFile(tmp, 'sha1');
-      if (actual !== sha1.toLowerCase()) throw new Error(`SHA-1 mismatch for ${url}: expected ${sha1}, got ${actual}`);
-    }
-    if (sha256) {
-      const actual = await hashFile(tmp, 'sha256');
-      if (actual !== sha256.toLowerCase()) throw new Error(`SHA-256 mismatch for ${url}: expected ${sha256}, got ${actual}`);
-    }
+    const mismatch = await hashMismatch(tmp, opts);
+    if (mismatch) throw new Error(`${mismatch} (${url})`);
     await rename(tmp, dest);
     return dest;
   } finally {

@@ -7,7 +7,8 @@ export const MANIFEST_URL = 'https://piston-meta.mojang.com/mc/game/version_mani
 
 export interface ManifestVersion {
   id: string;
-  type: 'release' | 'snapshot' | 'old_beta' | 'old_alpha' | string;
+  /** "release", "snapshot", "old_beta" or "old_alpha". */
+  type: string;
   url: string;
   sha1: string;
   releaseTime: string;

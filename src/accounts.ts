@@ -96,7 +96,7 @@ export async function removeAccount(paths: CalcitePaths, name: string): Promise<
     const accounts = await readStore(accountsFile(paths));
     const key = findKey(accounts, name);
     if (!key) return false;
-    delete accounts[key];
+    Reflect.deleteProperty(accounts, key);
     await writeStore(accountsFile(paths), accounts);
     return true;
   });
@@ -129,11 +129,14 @@ export async function prepareAccount(paths: CalcitePaths, location: string, acco
   }
   return withLock(accountsLock(paths), async () => {
     const accounts = await listAccounts(paths);
-    if (!accounts.length) throw Object.assign(new Error('No Microsoft account is stored; run `calcite login` first'), { code: 'not_logged_in' });
+    if (!accounts.length)
+      throw Object.assign(new Error('No Microsoft account is stored; run `calcite login` first'), { code: 'not_logged_in' });
     const wanted = account.name;
     const match = wanted ? accounts.find((a) => a.name.toLowerCase() === wanted.toLowerCase()) : accounts.find((a) => a.primary);
     if (!match) {
-      throw Object.assign(new Error(`No stored Microsoft account named "${wanted}" (have: ${accounts.map((a) => a.name).join(', ')})`), { code: 'unknown_account' });
+      throw Object.assign(new Error(`No stored Microsoft account named "${wanted}" (have: ${accounts.map((a) => a.name).join(', ')})`), {
+        code: 'unknown_account',
+      });
     }
     const session = (await readStore(accountsFile(paths)))[match.name];
     await rm(storeFile(location, OFFLINE), { force: true });

@@ -9,6 +9,7 @@ export type {
   BlockSearchResult,
   ChatLine,
   ClickMode,
+  ClientEvents,
   ClientOptions,
   ClientStatus,
   ContainerInfo,
@@ -17,6 +18,7 @@ export type {
   EntityInfo,
   EntityQuery,
   ExtensionCommand,
+  // eslint-disable-next-line @typescript-eslint/no-deprecated -- kept for 0.3 callers
   ExtensionEvent,
   ExtensionInfo,
   GameEvent,

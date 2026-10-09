@@ -65,7 +65,12 @@ export async function runE2E(title, scenario, { platformRadius = 8 } = {}) {
     process.exitCode = failures.length ? 1 : 0;
   } catch (err) {
     console.error(`${title} FAILED:`, err.code ?? '', err.message);
-    console.error(client.logsSince({ limit: 30 }).map((l) => `  ${l.source}: ${l.line}`).join('\n'));
+    console.error(
+      client
+        .logsSince({ limit: 30 })
+        .map((l) => `  ${l.source}: ${l.line}`)
+        .join('\n'),
+    );
     process.exitCode = 1;
   } finally {
     await client.stop();

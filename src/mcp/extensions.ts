@@ -28,6 +28,7 @@ export function registerExtensionTools({ server, manager }: ToolContext): void {
         timeoutSeconds: timeoutSeconds(30),
       },
     },
-    async ({ client, name, args, timeoutSeconds: seconds }) => manager.resolve(client).call(name, args ?? {}, { timeoutMs: seconds * 1000 }),
+    async ({ client, name, args, timeoutSeconds: seconds }) =>
+      manager.resolve(client).call(name, args ?? {}, { timeoutMs: seconds * 1000 }),
   );
 }

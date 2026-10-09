@@ -24,8 +24,15 @@ await runE2E(
     const around = await client.surroundings({ radius: 6 });
     const center = around.map[6]?.[6];
     check('surroundings map is centred on the player', around.map.length === 13 && center === '@', around.map);
-    check('surroundings shows the wall', around.map.some((row) => row[9] === '#'), around.map);
-    check('surroundings knows the ground', around.standingOn === 'minecraft:stone' && !!around.facing, { on: around.standingOn, facing: around.facing });
+    check(
+      'surroundings shows the wall',
+      around.map.some((row) => row[9] === '#'),
+      around.map,
+    );
+    check('surroundings knows the ground', around.standingOn === 'minecraft:stone' && !!around.facing, {
+      on: around.standingOn,
+      facing: around.facing,
+    });
 
     const found = await client.findBlocks({ blocks: 'gold_*', radius: 16 });
     const gold = found.blocks[0];
@@ -78,7 +85,10 @@ await runE2E(
     const pickaxe = await client.craft('wooden_pickaxe');
     inv = await client.inventory();
     const container = await client.container();
-    check('craft at a nearby table', pickaxe.crafted === 1 && count(inv, 'wooden_pickaxe') === 1 && !container.open, { pickaxe, items: inv.items });
+    check('craft at a nearby table', pickaxe.crafted === 1 && count(inv, 'wooden_pickaxe') === 1 && !container.open, {
+      pickaxe,
+      items: inv.items,
+    });
 
     await cmd(`setblock ${bx + 1} ${by} ${bz - 1} furnace`);
     await cmd('give @s cobblestone 2');
@@ -93,7 +103,11 @@ await runE2E(
       const c = await client.container();
       return c.furnace?.lit ? c : undefined;
     }, 5000);
-    check('transfer fills a furnace', input.moved === 1 && fuel.moved === 1 && !!lit, { input: input.moved, fuel: fuel.moved, furnace: lit?.furnace });
+    check('transfer fills a furnace', input.moved === 1 && fuel.moved === 1 && !!lit, {
+      input: input.moved,
+      fuel: fuel.moved,
+      furnace: lit?.furnace,
+    });
     await client.closeContainer();
     await sleep(500);
     const opened = client.eventsSince({ since, name: '^container\\.(open|close)$' }).map((e) => e.name);

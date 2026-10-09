@@ -15,8 +15,11 @@ export function registerAccountTools({ server, paths }: ToolContext): void {
   const logins = new Map<number, PendingLogin>();
   let loginSeq = 0;
 
-  tool(server, 'account_list', { title: 'Stored Microsoft accounts', description: 'Microsoft accounts whose login is saved.', inputSchema: {} }, async () =>
-    listAccounts(paths),
+  tool(
+    server,
+    'account_list',
+    { title: 'Stored Microsoft accounts', description: 'Microsoft accounts whose login is saved.', inputSchema: {} },
+    async () => listAccounts(paths),
   );
 
   tool(
@@ -34,7 +37,7 @@ export function registerAccountTools({ server, paths }: ToolContext): void {
       logins.set(id, login);
       login.handle.done.then(
         (name) => (login.account = name),
-        (e: Error) => (login.error = e.message),
+        (e: unknown) => (login.error = (e as Error).message),
       );
       login.url = await login.handle.url;
       return { loginId: id, url: login.url, next: 'Ask the user to open the URL and sign in, then call account_login_status' };

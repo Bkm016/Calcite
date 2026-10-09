@@ -47,8 +47,8 @@ export async function writeHmcProfile(
   javaMajor: number,
   loader?: { kind: string; build?: string },
 ): Promise<void> {
-  const [platform, , build] = loader ? hmcVersionArgs(versionId, loader) : ['vanilla'];
-  const version = { side: null, platform, version: versionId, build: build ?? null };
+  const build = loader ? hmcVersionArgs(versionId, loader).at(2) : undefined;
+  const version = { side: null, platform: loader?.kind ?? 'vanilla', version: versionId, build: build ?? null };
   const profile = {
     name: 'calcite',
     version,
@@ -111,19 +111,20 @@ function guardExit(): void {
   const killAll = () => {
     for (const child of live) {
       if (child.pid === undefined || child.exitCode !== null) continue;
-      try {
-        if (process.platform === 'win32') spawnSync('taskkill', ['/pid', String(child.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' });
-        else process.kill(-child.pid, 'SIGKILL');
-      } catch {
-        // already gone
-      }
+      if (process.platform === 'win32')
+        spawnSync('taskkill', ['/pid', String(child.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' });
+      else signalGroup(child, child.pid, 'SIGKILL');
     }
     live.clear();
   };
   process.once('exit', killAll);
   // A signal without a handler terminates Node without an 'exit' event; when nobody else handles it, clean up and
   // die with the conventional status. Hosts that handle the signal themselves end up in 'exit' above.
-  for (const [signal, code] of [['SIGTERM', 143], ['SIGHUP', 129], ['SIGINT', 130]] as const) {
+  for (const [signal, code] of [
+    ['SIGTERM', 143],
+    ['SIGHUP', 129],
+    ['SIGINT', 130],
+  ] as const) {
     process.on(signal, () => {
       if (process.listenerCount(signal) > 1) return;
       killAll();
@@ -158,7 +159,6 @@ export function runHmc(opts: HmcRunOptions): HmcRun {
   live.add(child);
   child.once('exit', () => live.delete(child));
   for (const stream of [child.stdout, child.stderr]) {
-    if (!stream) continue;
     const rl = createInterface({ input: stream });
     rl.on('line', (line) => opts.onLine?.(line));
   }
@@ -169,26 +169,26 @@ export function runHmc(opts: HmcRunOptions): HmcRun {
   return { child, exited };
 }
 
+/** Signals the process group led by {@code child} (see {@link runHmc}), or the child alone when that fails. */
+function signalGroup(child: ChildProcess, pid: number, signal: NodeJS.Signals): void {
+  try {
+    process.kill(-pid, signal);
+  } catch {
+    child.kill(signal);
+  }
+}
+
 /** Stops a process tree started by {@link runHmc}. */
 export async function killTree(child: ChildProcess, graceMs = 5000): Promise<void> {
-  if (child.exitCode !== null || child.signalCode !== null || child.pid === undefined) return;
+  const pid = child.pid;
+  if (child.exitCode !== null || child.signalCode !== null || pid === undefined) return;
   const exited = new Promise<void>((resolve) => child.once('exit', () => resolve()));
   if (process.platform === 'win32') {
-    spawn('taskkill', ['/pid', String(child.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' });
+    spawn('taskkill', ['/pid', String(pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' });
   } else {
-    try {
-      process.kill(-child.pid, 'SIGTERM');
-    } catch {
-      child.kill('SIGTERM');
-    }
-    const timer = setTimeout(() => {
-      try {
-        process.kill(-child.pid!, 'SIGKILL');
-      } catch {
-        child.kill('SIGKILL');
-      }
-    }, graceMs);
-    exited.finally(() => clearTimeout(timer));
+    signalGroup(child, pid, 'SIGTERM');
+    const timer = setTimeout(() => signalGroup(child, pid, 'SIGKILL'), graceMs);
+    void exited.finally(() => clearTimeout(timer));
   }
   await Promise.race([exited, new Promise((r) => setTimeout(r, graceMs * 2))]);
 }

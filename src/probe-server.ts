@@ -18,6 +18,19 @@ export class ProbeError extends Error {
   }
 }
 
+/** An event the probe forwards from the game or an extension. */
+export interface ProbeEvent {
+  name: string;
+  data: unknown;
+  time: number;
+}
+
+interface ProbeServerEvents {
+  connected: [];
+  disconnected: [];
+  event: [event: ProbeEvent];
+}
+
 interface Pending {
   resolve(value: unknown): void;
   reject(err: Error): void;
@@ -27,24 +40,23 @@ interface Pending {
 /**
  * TCP endpoint (127.0.0.1, random port) the in-game probe connects to. Authenticated with a random token;
  * JSON objects separated by newlines.
- *
- * Events: 'connected', 'disconnected', 'event' (a game or extension event: {name, data, time}).
  */
-export class ProbeServer extends EventEmitter {
+export class ProbeServer extends EventEmitter<ProbeServerEvents> {
   readonly token = randomBytes(24).toString('hex');
   private server: Server | null = null;
   private socket: Socket | null = null;
   private nextId = 1;
-  private pending = new Map<number, Pending>();
+  private readonly pending = new Map<number, Pending>();
   port = 0;
 
   async listen(): Promise<number> {
-    this.server = createServer((socket) => this.accept(socket));
+    const server = createServer((socket) => this.accept(socket));
+    this.server = server;
     await new Promise<void>((resolve, reject) => {
-      this.server!.once('error', reject);
-      this.server!.listen(0, '127.0.0.1', () => resolve());
+      server.once('error', reject);
+      server.listen(0, '127.0.0.1', () => resolve());
     });
-    const address = this.server.address();
+    const address = server.address();
     if (!address || typeof address === 'string') throw new Error('Probe server has no TCP address');
     this.port = address.port;
     return this.port;
@@ -83,7 +95,7 @@ export class ProbeServer extends EventEmitter {
         this.socket?.destroy();
         this.socket = socket;
         log.debug(`probe connected (java ${String(msg.java)})`);
-        this.emit('connected', msg);
+        this.emit('connected');
         return;
       }
       if (msg.type === 'event') {
@@ -110,7 +122,10 @@ export class ProbeServer extends EventEmitter {
     this.pending.delete(id);
     clearTimeout(pending.timer);
     if (msg.ok) pending.resolve(msg.result);
-    else pending.reject(new ProbeError(String(msg.code ?? 'error'), String(msg.error ?? 'probe error')));
+    else
+      pending.reject(
+        new ProbeError(typeof msg.code === 'string' ? msg.code : 'error', typeof msg.error === 'string' ? msg.error : 'probe error'),
+      );
   }
 
   private failAll(err: Error): void {
@@ -131,7 +146,7 @@ export class ProbeServer extends EventEmitter {
         this.pending.delete(id);
         reject(new ProbeError('timeout', `Probe request "${op}" timed out after ${timeoutMs}ms`));
       }, timeoutMs);
-      this.pending.set(id, { resolve: resolve as (v: unknown) => void, reject, timer });
+      this.pending.set(id, { resolve: (value) => resolve(value as T), reject, timer });
       socket.write(JSON.stringify({ id, op, args }) + '\n');
     });
   }
@@ -140,7 +155,8 @@ export class ProbeServer extends EventEmitter {
     this.failAll(new ProbeError('closed', 'Probe server closed'));
     this.socket?.destroy();
     this.socket = null;
-    await new Promise<void>((resolve) => (this.server ? this.server.close(() => resolve()) : resolve()));
+    const server = this.server;
     this.server = null;
+    if (server) await new Promise<void>((resolve) => server.close(() => resolve()));
   }
 }

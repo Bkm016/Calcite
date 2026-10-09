@@ -20,7 +20,7 @@ async function centralDirectory(handle: FileHandle, file: string): Promise<Entry
   const cd = Buffer.alloc(cdSize);
   await handle.read(cd, 0, cdSize, cdOffset);
   const entries: Entry[] = [];
-  for (let p = 0; p + 46 <= cd.length && cd.readUInt32LE(p) === 0x02014b50; ) {
+  for (let p = 0; p + 46 <= cd.length && cd.readUInt32LE(p) === 0x02014b50;) {
     const nameLen = cd.readUInt16LE(p + 28);
     const extraLen = cd.readUInt16LE(p + 30);
     const commentLen = cd.readUInt16LE(p + 32);

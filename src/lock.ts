@@ -17,11 +17,28 @@ export interface LockOptions {
   staleMs?: number;
 }
 
+/** Whether the lock in {@code dir} was left behind; undefined when it vanished meanwhile. */
+async function staleLock(dir: string, staleMs: number): Promise<boolean | undefined> {
+  let modified: number;
+  try {
+    modified = (await stat(dir)).mtimeMs;
+  } catch {
+    return undefined;
+  }
+  const owner = Number(await readFile(join(dir, 'owner'), 'utf8').catch(() => ''));
+  // a lock without an owner is still being created, unless that never finished
+  if (!(owner > 0)) return Date.now() - modified > 10_000;
+  return !alive(owner) || Date.now() - modified > staleMs;
+}
+
 /**
  * Cross-process lock based on an atomic mkdir. A lock whose owner process is gone (or that is older than
  * {@code staleMs}) is taken over. Returns the release function.
  */
-export async function acquireLock(dir: string, { timeoutMs = 10 * 60_000, staleMs = Infinity }: LockOptions = {}): Promise<() => Promise<void>> {
+export async function acquireLock(
+  dir: string,
+  { timeoutMs = 10 * 60_000, staleMs = Infinity }: LockOptions = {},
+): Promise<() => Promise<void>> {
   const deadline = Date.now() + timeoutMs;
   let wait = 50;
   for (;;) {
@@ -42,20 +59,8 @@ export async function acquireLock(dir: string, { timeoutMs = 10 * 60_000, staleM
       }
       if (code !== 'EEXIST') throw err;
     }
-    let stale = false;
-    try {
-      const info = await stat(dir);
-      let owner = 0;
-      try {
-        owner = Number(await readFile(join(dir, 'owner'), 'utf8'));
-      } catch {
-        // owner not written yet
-      }
-      if (owner > 0) stale = !alive(owner) || Date.now() - info.mtimeMs > staleMs;
-      else stale = Date.now() - info.mtimeMs > 10_000;
-    } catch {
-      continue; // lock vanished meanwhile
-    }
+    const stale = await staleLock(dir, staleMs);
+    if (stale === undefined) continue; // vanished meanwhile
     if (stale) {
       await rm(dir, { recursive: true, force: true });
       continue;

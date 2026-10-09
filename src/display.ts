@@ -41,7 +41,7 @@ export function hasSharedLib(name: string): boolean {
   const dirs = ['/usr/lib64', '/usr/lib', '/lib64', '/lib', '/usr/local/lib'];
   for (const base of ['/usr/lib', '/lib']) {
     try {
-      for (const d of readdirSync(base)) if (/-linux-gnu/.test(d)) dirs.push(join(base, d));
+      for (const d of readdirSync(base)) if (d.includes('-linux-gnu')) dirs.push(join(base, d));
     } catch {
       // not there
     }
@@ -94,58 +94,52 @@ async function waitFor(check: () => boolean, timeoutMs: number): Promise<boolean
   return check();
 }
 
+/** Starts an Xvfb on a free display number; it is killed when this process exits. */
+async function startXvfb(width: number, height: number): Promise<{ proc: ChildProcess; display: string }> {
+  const xvfb = which('Xvfb');
+  if (!xvfb) {
+    throw new Error(
+      'Rendering on a Linux machine without a display needs Xvfb and Mesa: apt-get install -y xvfb libgl1-mesa-dri libegl1 libegl-mesa0 (or run with --render off)',
+    );
+  }
+  // a display may still be taken without leaving traces we can see; Xvfb then exits and the next number is tried
+  const tried = new Set<number>();
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const n = freeDisplayNumber(tried);
+    tried.add(n);
+    const proc = spawn(xvfb, [`:${n}`, '-screen', '0', `${width}x${height}x24`, '-nolisten', 'tcp'], { stdio: 'ignore' });
+    proc.unref();
+    const socket = `/tmp/.X11-unix/X${n}`;
+    await waitFor(() => existsSync(socket) || proc.exitCode !== null, 10_000);
+    if (proc.exitCode === null && existsSync(socket)) {
+      log.info(`started Xvfb :${n} (${width}x${height})`);
+      process.once('exit', () => proc.kill());
+      return { proc, display: `:${n}` };
+    }
+    proc.kill();
+    log.debug(`Xvfb :${n} did not start, trying another display`);
+  }
+  throw new Error(`Xvfb failed to start (tried displays ${[...tried].map((d) => `:${d}`).join(', ')})`);
+}
+
 /**
  * Provides a display for a rendering client.
  * - Linux with DISPLAY set (desktop, or an existing Xvfb): use it.
  * - Linux without DISPLAY: start a shared Xvfb (needs the `Xvfb` binary) with software GL when there is no GPU.
  * - Windows / macOS: the native display is used.
  */
+const noRelease = () => undefined;
+
 export async function acquireDisplay(opts: { width?: number; height?: number; forceVirtual?: boolean } = {}): Promise<DisplayLease> {
   if (process.platform !== 'linux') {
-    return { env: {}, virtual: false, release() {} };
+    return { env: {}, virtual: false, release: noRelease };
   }
   if (process.env.DISPLAY && !opts.forceVirtual) {
     const virtual = /xvfb/i.test(process.env.CALCITE_DISPLAY_KIND || '');
-    return { env: { DISPLAY: process.env.DISPLAY, ...(virtual ? virtualDisplayEnv() : softwareGlEnv()) }, virtual, release() {} };
+    return { env: { DISPLAY: process.env.DISPLAY, ...(virtual ? virtualDisplayEnv() : softwareGlEnv()) }, virtual, release: noRelease };
   }
-  if (!shared || shared.proc.exitCode !== null) {
-    const xvfb = which('Xvfb');
-    if (!xvfb) {
-      throw new Error('Rendering on a Linux machine without a display needs Xvfb and Mesa: apt-get install -y xvfb libgl1-mesa-dri libegl1 libegl-mesa0 (or run with --render off)');
-    }
-    const width = opts.width ?? 1280;
-    const height = opts.height ?? 720;
-    // a display may still be taken without leaving traces we can see; Xvfb then exits and the next number is tried
-    const tried = new Set<number>();
-    let n = 0;
-    let proc: ChildProcess | undefined;
-    for (let attempt = 0; attempt < 5 && !proc; attempt++) {
-      n = freeDisplayNumber(tried);
-      tried.add(n);
-      const candidate = spawn(xvfb, [`:${n}`, '-screen', '0', `${width}x${height}x24`, '-nolisten', 'tcp'], {
-        stdio: 'ignore',
-        detached: false,
-      });
-      candidate.unref();
-      await waitFor(() => existsSync(`/tmp/.X11-unix/X${n}`) || candidate.exitCode !== null, 10_000);
-      if (candidate.exitCode === null && existsSync(`/tmp/.X11-unix/X${n}`)) proc = candidate;
-      else {
-        candidate.kill();
-        log.debug(`Xvfb :${n} did not start, trying another display`);
-      }
-    }
-    if (!proc) throw new Error(`Xvfb failed to start (tried displays ${[...tried].map((d) => `:${d}`).join(', ')})`);
-    log.info(`started Xvfb :${n} (${width}x${height})`);
-    const xvfbProc = proc;
-    shared = { proc: xvfbProc, display: `:${n}`, refs: 0 };
-    const cleanup = () => {
-      try {
-        xvfbProc.kill();
-      } catch {
-        // already gone
-      }
-    };
-    process.once('exit', cleanup);
+  if (shared?.proc.exitCode !== null) {
+    shared = { ...(await startXvfb(opts.width ?? 1280, opts.height ?? 720)), refs: 0 };
   }
   const lease = shared;
   lease.refs++;

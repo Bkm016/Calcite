@@ -65,7 +65,7 @@ async function modrinthVersion(project: string, version: string | undefined, mc:
 }
 
 async function modrinthFile(paths: CalcitePaths, v: ModrinthVersion): Promise<{ name: string; file: string }> {
-  const f = v.files.find((x) => x.primary) ?? v.files[0];
+  const f = v.files.find((x) => x.primary) ?? v.files.at(0);
   if (!f) throw new CalciteError('mod_not_found', `Modrinth version ${v.id} has no files`);
   const name = safeName(f.filename);
   const file = join(paths.mods, 'modrinth', f.hashes.sha1, name);
@@ -82,7 +82,10 @@ async function localJars(spec: string): Promise<string[]> {
     throw new CalciteError('mod_not_found', `Mod file or folder not found: ${path}`);
   }
   if (!info.isDirectory()) return [path];
-  return (await readdir(path)).filter((n) => n.toLowerCase().endsWith('.jar')).sort().map((n) => join(path, n));
+  return (await readdir(path))
+    .filter((n) => n.toLowerCase().endsWith('.jar'))
+    .sort()
+    .map((n) => join(path, n));
 }
 
 /**
@@ -110,8 +113,7 @@ export async function resolveMods(paths: CalcitePaths, specs: string[], mc: stri
     }
   }
   // Modrinth projects and their required dependencies, breadth first
-  while (pending.length) {
-    const next = pending.shift()!;
+  for (let next = pending.shift(); next; next = pending.shift()) {
     const v = await modrinthVersion(next.project, next.version, mc, loader);
     if (projects.has(v.project_id)) continue;
     projects.add(v.project_id);

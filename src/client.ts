@@ -54,14 +54,18 @@ export class Client extends ClientCore {
   async entities(query: EntityQuery = {}): Promise<EntityInfo[]> {
     const list = await this.requireProbe().request<EntityInfo[]>(
       'entities',
-      { radius: query.radius ?? 0, limit: query.type || query.uuid || query.name ? 0 : query.limit ?? 0, includeSelf: !!query.includeSelf },
+      {
+        radius: query.radius ?? 0,
+        limit: query.type || query.uuid || query.name ? 0 : (query.limit ?? 0),
+        includeSelf: !!query.includeSelf,
+      },
       20_000,
     );
     const type = query.type ? (query.type.includes(':') ? query.type : `minecraft:${query.type}`).toLowerCase() : undefined;
     const name = query.name?.toLowerCase();
     let result = list.filter(
       (e) =>
-        (!type || e.type?.toLowerCase() === type) &&
+        (!type || e.type.toLowerCase() === type) &&
         (!query.uuid || e.uuid === query.uuid) &&
         (!name || (e.name ?? '').toLowerCase().includes(name) || (e.customName ?? '').toLowerCase().includes(name)),
     );
@@ -294,7 +298,8 @@ export class Client extends ClientCore {
         const { present = true, ...query } = cond.entity;
         try {
           const found = await this.entities(query);
-          if (present ? found.length > 0 : found.length === 0) return { matched: present ? 'entity_present' : 'entity_absent', entities: found };
+          if (present ? found.length > 0 : found.length === 0)
+            return { matched: present ? 'entity_present' : 'entity_absent', entities: found };
         } catch (err) {
           if (!(err instanceof ProbeError) || !['not_ready', 'not_in_game'].includes(err.code)) throw err;
         }

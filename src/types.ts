@@ -4,7 +4,18 @@ export type RenderMode = 'off' | 'on-demand' | 'always';
 
 export type Account = { type: 'offline'; username: string } | { type: 'microsoft'; name?: string };
 
-export type Phase = 'idle' | 'preparing' | 'waiting_for_server' | 'starting' | 'connecting' | 'in_game' | 'disconnected' | 'reconnecting' | 'stopping' | 'stopped' | 'crashed';
+export type Phase =
+  | 'idle'
+  | 'preparing'
+  | 'waiting_for_server'
+  | 'starting'
+  | 'connecting'
+  | 'in_game'
+  | 'disconnected'
+  | 'reconnecting'
+  | 'stopping'
+  | 'stopped'
+  | 'crashed';
 
 export interface ServerAddress {
   host: string;
@@ -380,6 +391,19 @@ export interface ClientStatus {
   game?: GameState;
 }
 
+/** Events emitted by a client, with their listener arguments. */
+export interface ClientEvents {
+  phase: [phase: Phase];
+  log: [line: LogLine];
+  chat: [line: ChatLine];
+  state: [state: GameState];
+  /** A built-in game event or one sent by an extension. */
+  event: [event: GameEvent];
+  /** The game process exited (also before a reconnect). */
+  exit: [code: number | null];
+  error: [error: Error];
+}
+
 export class CalciteError extends Error {
   constructor(
     readonly code: string,
@@ -402,5 +426,8 @@ export function parseServer(server: string | ServerAddress): ServerAddress {
 
 /** Offline username derived from a client name (3-16 chars of [A-Za-z0-9_]). */
 export function defaultUsername(name: string): string {
-  return name.replace(/[^A-Za-z0-9_]/g, '_').slice(0, 16).padEnd(3, '_');
+  return name
+    .replace(/[^A-Za-z0-9_]/g, '_')
+    .slice(0, 16)
+    .padEnd(3, '_');
 }

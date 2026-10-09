@@ -7,24 +7,31 @@ interface ReplCommand {
   args?: string;
   help: string;
   /** {@code rest} is the text after the command name, for arguments that may contain spaces. */
-  run(client: Client, args: string[], rest: string): Promise<unknown>;
+  run(client: Client, args: string[], rest: string): unknown;
 }
 
 const out = (line = '') => process.stdout.write(`${line}\n`);
 
-const usage = (name: string) => new CalciteError('bad_request', `usage: :${name} ${COMMANDS[name].args ?? ''}`);
+const usage = (name: string) => new CalciteError('bad_request', `usage: :${name} ${lookup(name)?.args ?? ''}`);
 
-/** The first {@code count} arguments as numbers; fails with the command's usage otherwise. */
-function numbers(args: string[], count: number, name: string): number[] {
-  const n = args.slice(0, count).map(Number);
-  if (n.length < count || n.some((v) => !Number.isFinite(v))) throw usage(name);
-  return n;
+/** Argument {@code index} as a number; fails with the command's usage when it is missing or not a number. */
+function num(args: string[], index: number, name: string): number {
+  const value = Number(args[index] ?? NaN);
+  if (!Number.isFinite(value)) throw usage(name);
+  return value;
+}
+
+/** Arguments {@code from} to {@code from + 2} as a block position. */
+function point(args: string[], name: string, from = 0): { x: number; y: number; z: number } {
+  return { x: num(args, from, name), y: num(args, from + 1, name), z: num(args, from + 2, name) };
 }
 
 const optionalNumber = (value: string | undefined) => (value === undefined ? undefined : Number(value));
 
 function printSurroundings(s: Surroundings): void {
-  out(`${s.x.toFixed(1)} ${s.y.toFixed(1)} ${s.z.toFixed(1)} facing ${s.facing} in ${s.biome ?? '?'} (${s.dimension ?? '?'}), time ${s.timeOfDay ?? '?'}`);
+  out(
+    `${s.x.toFixed(1)} ${s.y.toFixed(1)} ${s.z.toFixed(1)} facing ${s.facing} in ${s.biome ?? '?'} (${s.dimension ?? '?'}), time ${s.timeOfDay ?? '?'}`,
+  );
   out(`standing on ${s.standingOn ?? '?'}${s.in ? `, in ${s.in}` : ''}`);
   for (const row of s.map) out(`  ${row}`);
   out(`  ${s.legend}`);
@@ -38,8 +45,10 @@ const COMMANDS: Record<string, ReplCommand> = {
     args: '[radius]',
     help: 'entities nearby',
     run: async (c, [radius]) => {
-      for (const e of await c.entities({ radius: Number(radius ?? 32) })) {
-        out(`${e.id}\t${e.type}\t${e.name ?? ''}${e.customName ? ` (${e.customName})` : ''}\t${e.x?.toFixed(1)} ${e.y?.toFixed(1)} ${e.z?.toFixed(1)}`);
+      for (const e of await c.entities({ radius: optionalNumber(radius) ?? 32 })) {
+        out(
+          `${e.id}\t${e.type}\t${e.name ?? ''}${e.customName ? ` (${e.customName})` : ''}\t${e.x?.toFixed(1)} ${e.y?.toFixed(1)} ${e.z?.toFixed(1)}`,
+        );
       }
     },
   },
@@ -70,31 +79,31 @@ const COMMANDS: Record<string, ReplCommand> = {
   look: {
     args: '<yaw> <pitch>',
     help: 'turn to a rotation',
-    run: (c, args) => {
-      const [yaw, pitch] = numbers(args, 2, 'look');
-      return c.look({ yaw, pitch });
-    },
+    run: (c, args) => c.look({ yaw: num(args, 0, 'look'), pitch: num(args, 1, 'look') }),
   },
   lookat: {
     args: '<x> <y> <z>',
     help: 'turn towards a point',
-    run: (c, args) => {
-      const [x, y, z] = numbers(args, 3, 'lookat');
-      return c.look({ x, y, z });
-    },
+    run: (c, args) => c.look(point(args, 'lookat')),
   },
   goto: {
     args: '<x> <z> [y]',
     help: 'walk there along a path',
-    run: (c, args) => {
-      const [x, z] = numbers(args, 2, 'goto');
-      return c.walkTo(x, z, { y: optionalNumber(args[2]) });
-    },
+    run: (c, args) => c.walkTo(num(args, 0, 'goto'), num(args, 1, 'goto'), { y: optionalNumber(args[2]) }),
   },
   move: {
     args: '<forward,jump,...> [ticks]',
     help: 'hold movement keys',
-    run: (c, [keys = '', ticks]) => c.move(Object.fromEntries(keys.split(',').filter(Boolean).map((k) => [k, true])), { ticks: Number(ticks ?? 20) }),
+    run: (c, [keys = '', ticks]) =>
+      c.move(
+        Object.fromEntries(
+          keys
+            .split(',')
+            .filter(Boolean)
+            .map((k) => [k, true]),
+        ),
+        { ticks: optionalNumber(ticks) ?? 20 },
+      ),
   },
   stop: { help: 'release keys, cancel the running action', run: (c) => c.stopActions() },
   task: { help: 'the running action', run: (c) => c.task() },
@@ -102,33 +111,24 @@ const COMMANDS: Record<string, ReplCommand> = {
   use: {
     args: '[entity id | x y z] [hold ticks]',
     help: 'right click',
-    run: (c, args) => {
-      if (args.length >= 3) {
-        const [x, y, z] = numbers(args, 3, 'use');
-        return c.use({ block: { x, y, z }, holdTicks: optionalNumber(args[3]) });
-      }
-      return c.use({ entityId: optionalNumber(args[0]), holdTicks: optionalNumber(args[1]) });
-    },
+    run: (c, args) =>
+      args.length >= 3
+        ? c.use({ block: point(args, 'use'), holdTicks: optionalNumber(args[3]) })
+        : c.use({ entityId: optionalNumber(args[0]), holdTicks: optionalNumber(args[1]) }),
   },
   dig: {
     args: '<x> <y> <z>',
     help: 'mine a block',
-    run: (c, args) => {
-      const [x, y, z] = numbers(args, 3, 'dig');
-      return c.dig({ x, y, z });
-    },
+    run: (c, args) => c.dig(point(args, 'dig')),
   },
   block: {
     args: '<x> <y> <z>',
     help: 'block at a position',
-    run: (c, args) => {
-      const [x, y, z] = numbers(args, 3, 'block');
-      return c.block({ x, y, z });
-    },
+    run: (c, args) => c.block(point(args, 'block')),
   },
   target: { help: 'what the crosshair points at', run: (c) => c.target() },
   inv: { help: 'inventory', run: (c) => c.inventory() },
-  slot: { args: '<0-8>', help: 'select a hotbar slot', run: (c, args) => c.selectSlot(numbers(args, 1, 'slot')[0]) },
+  slot: { args: '<0-8>', help: 'select a hotbar slot', run: (c, args) => c.selectSlot(num(args, 0, 'slot')) },
   craft: {
     args: '<item> [count]',
     help: 'craft from the inventory',
@@ -141,7 +141,7 @@ const COMMANDS: Record<string, ReplCommand> = {
   click: {
     args: '<slot> [button] [mode]',
     help: 'click a container slot',
-    run: (c, args) => c.click(numbers(args, 1, 'click')[0], { button: Number(args[1] ?? 0), mode: (args[2] as ClickMode) ?? 'pickup' }),
+    run: (c, args) => c.click(num(args, 0, 'click'), { button: optionalNumber(args[1]), mode: args[2] as ClickMode | undefined }),
   },
   transfer: {
     args: '<item> [count] [inventory]',
@@ -154,7 +154,7 @@ const COMMANDS: Record<string, ReplCommand> = {
   },
   close: { help: 'close the container', run: (c) => c.closeContainer() },
   drop: { args: '[all]', help: 'drop the held item', run: (c, [all]) => c.drop({ all: all === 'all' }) },
-  events: { args: '[name regex]', help: 'recent game events', run: async (c, [name]) => c.eventsSince({ name, limit: 20 }) },
+  events: { args: '[name regex]', help: 'recent game events', run: (c, [name]) => c.eventsSince({ name, limit: 20 }) },
   ext: {
     help: 'extension commands',
     run: async (c) => {
@@ -173,8 +173,12 @@ const COMMANDS: Record<string, ReplCommand> = {
       return c.call(name, json ? (JSON.parse(json) as Record<string, unknown>) : {});
     },
   },
-  help: { help: 'this list', run: async () => help() },
+  help: { help: 'this list', run: () => help() },
 };
+
+function lookup(name: string): ReplCommand | undefined {
+  return Object.hasOwn(COMMANDS, name) ? COMMANDS[name] : undefined;
+}
 
 function help(): string {
   const lines = Object.entries(COMMANDS).map(([name, c]) => [`:${name} ${c.args ?? ''}`, c.help]);
@@ -186,8 +190,8 @@ function help(): string {
 async function execute(client: Client, line: string): Promise<void> {
   if (line.startsWith('/')) return client.command(line.slice(1));
   if (!line.startsWith(':')) return client.chat(line);
-  const [name, ...args] = line.slice(1).split(/\s+/);
-  const command = Object.hasOwn(COMMANDS, name) ? COMMANDS[name] : undefined;
+  const [name = '', ...args] = line.slice(1).split(/\s+/);
+  const command = lookup(name);
   if (!command) throw new CalciteError('unknown_command', `unknown command :${name} (:help lists them)`);
   const result = await command.run(client, args, line.slice(1 + name.length).trim());
   if (typeof result === 'string') out(result);

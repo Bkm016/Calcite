@@ -17,7 +17,11 @@ export function registerItemTools({ server, manager, tasks }: ToolContext): void
   tool(
     server,
     'select_slot',
-    { title: 'Select hotbar slot', description: 'Selects hotbar slot 0-8 (the held item).', inputSchema: { client: clientName, slot: z.number().int().min(0).max(8) } },
+    {
+      title: 'Select hotbar slot',
+      description: 'Selects hotbar slot 0-8 (the held item).',
+      inputSchema: { client: clientName, slot: z.number().int().min(0).max(8) },
+    },
     async ({ client, slot }) => manager.resolve(client).selectSlot(slot),
   );
 
@@ -31,7 +35,13 @@ export function registerItemTools({ server, manager, tasks }: ToolContext): void
       inputSchema: {
         client: clientName,
         item: z.string().min(1).describe('Item id, e.g. "oak_planks" or "minecraft:stick"'),
-        count: z.number().int().positive().max(64 * 36).default(1).describe('How many items to make (recipes making several may give a few more)'),
+        count: z
+          .number()
+          .int()
+          .positive()
+          .max(64 * 36)
+          .default(1)
+          .describe('How many items to make (recipes making several may give a few more)'),
         background,
         timeoutSeconds: timeoutSeconds(30),
       },
@@ -102,7 +112,11 @@ export function registerItemTools({ server, manager, tasks }: ToolContext): void
   tool(
     server,
     'drop_item',
-    { title: 'Drop item', description: 'Drops one item, or the whole stack, from the selected hotbar slot.', inputSchema: { client: clientName, all: z.boolean().default(false) } },
+    {
+      title: 'Drop item',
+      description: 'Drops one item, or the whole stack, from the selected hotbar slot.',
+      inputSchema: { client: clientName, all: z.boolean().default(false) },
+    },
     async ({ client, all }) => manager.resolve(client).drop({ all }),
   );
 }

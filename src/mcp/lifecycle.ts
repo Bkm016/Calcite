@@ -13,7 +13,10 @@ export function registerLifecycleTools({ server, manager, paths, defaults }: Too
       description:
         'Downloads (if needed) and starts a Minecraft client, optionally joining a server. Resolves once the player is in the world (or on the title screen without a server).',
       inputSchema: {
-        name: z.string().regex(/^[A-Za-z0-9_.-]{1,32}$/).describe('Unique client name; also the instance directory'),
+        name: z
+          .string()
+          .regex(/^[A-Za-z0-9_.-]{1,32}$/)
+          .describe('Unique client name; also the instance directory'),
         version: z.string().default('release').describe('Minecraft version id, "release" (latest release) or "snapshot"'),
         loader: z
           .string()
@@ -22,16 +25,28 @@ export function registerLifecycleTools({ server, manager, paths, defaults }: Too
         mods: z
           .array(z.string())
           .optional()
-          .describe('Mods (needs loader): "modrinth:<project>[@version]" (with required dependencies), http(s) URLs of jars, or local jar/folder paths'),
+          .describe(
+            'Mods (needs loader): "modrinth:<project>[@version]" (with required dependencies), http(s) URLs of jars, or local jar/folder paths',
+          ),
         extensions: z
           .array(z.string())
           .optional()
           .describe('Probe extension jars (local paths or http(s) URLs) that add commands and events; see list_extensions'),
         server: z.string().optional().describe('host[:port] to join'),
         username: z.string().optional().describe('Offline username (3-16 chars). Ignored when microsoft is set'),
-        microsoft: z.union([z.boolean(), z.string()]).optional().describe('Use a stored Microsoft account: true for the primary one or the profile name'),
-        render: z.enum(['on-demand', 'always', 'off']).optional().describe('on-demand (default): render only for screenshots; always; off: no renderer at all'),
-        memory: z.string().regex(/^\d+[MG]$/).optional().describe('Max heap, e.g. "2G"'),
+        microsoft: z
+          .union([z.boolean(), z.string()])
+          .optional()
+          .describe('Use a stored Microsoft account: true for the primary one or the profile name'),
+        render: z
+          .enum(['on-demand', 'always', 'off'])
+          .optional()
+          .describe('on-demand (default): render only for screenshots; always; off: no renderer at all'),
+        memory: z
+          .string()
+          .regex(/^\d+[MG]$/)
+          .optional()
+          .describe('Max heap, e.g. "2G"'),
         reconnect: z.boolean().optional().describe('Relaunch and rejoin after a disconnect/crash (default true)'),
         timeoutSeconds: z.number().int().positive().optional().describe('Startup timeout (default 900)'),
       },
@@ -58,13 +73,23 @@ export function registerLifecycleTools({ server, manager, paths, defaults }: Too
     },
   );
 
-  tool(server, 'stop_client', { title: 'Stop a client', description: 'Stops the game and frees its resources.', inputSchema: { client: clientName } }, async ({ client }) => {
-    const target = manager.resolve(client);
-    await manager.stop(target.options.name);
-    return `Stopped ${target.options.name}`;
-  });
+  tool(
+    server,
+    'stop_client',
+    { title: 'Stop a client', description: 'Stops the game and frees its resources.', inputSchema: { client: clientName } },
+    async ({ client }) => {
+      const target = manager.resolve(client);
+      await manager.stop(target.options.name);
+      return `Stopped ${target.options.name}`;
+    },
+  );
 
-  tool(server, 'list_clients', { title: 'List clients', description: 'Status of every client managed by this server.', inputSchema: {} }, async () => manager.list());
+  tool(
+    server,
+    'list_clients',
+    { title: 'List clients', description: 'Status of every client managed by this server.', inputSchema: {} },
+    () => manager.list(),
+  );
 
   tool(
     server,
@@ -93,7 +118,8 @@ export function registerLifecycleTools({ server, manager, paths, defaults }: Too
     'install_version',
     {
       title: 'Pre-download a version',
-      description: 'Downloads a version (client, libraries, assets, Java, optionally a mod loader) without launching, so the next launch is fast.',
+      description:
+        'Downloads a version (client, libraries, assets, Java, optionally a mod loader) without launching, so the next launch is fast.',
       inputSchema: {
         version: z.string().default('release'),
         loader: z.string().optional().describe('Also install a mod loader: "fabric", "forge" or "neoforge", optionally "@<version>"'),

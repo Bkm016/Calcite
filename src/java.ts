@@ -65,7 +65,16 @@ async function candidateExecutables(paths: CalcitePaths): Promise<string[]> {
   if (process.platform === 'win32') {
     for (const base of [process.env.ProgramFiles, process.env['ProgramFiles(x86)'], process.env.ProgramW6432]) {
       if (!base) continue;
-      for (const vendor of ['Java', 'Eclipse Adoptium', 'Eclipse Foundation', 'Microsoft', 'Zulu', 'Amazon Corretto', 'BellSoft', 'Semeru']) {
+      for (const vendor of [
+        'Java',
+        'Eclipse Adoptium',
+        'Eclipse Foundation',
+        'Microsoft',
+        'Zulu',
+        'Amazon Corretto',
+        'BellSoft',
+        'Semeru',
+      ]) {
         roots.push(join(base, vendor));
       }
     }
@@ -158,7 +167,7 @@ export async function downloadJava(paths: CalcitePaths, major: number): Promise<
     for (const image of ['jre', 'jdk']) {
       const url = `https://api.adoptium.net/v3/assets/latest/${major}/hotspot?architecture=${arch}&image_type=${image}&os=${os}&vendor=eclipse`;
       const assets = await httpJson<AdoptiumAsset[]>(url).catch(() => []);
-      asset = assets[0];
+      asset = assets.at(0);
       if (asset) break;
     }
     if (!asset) throw new Error(`No Temurin ${major} build for ${os}/${arch}`);

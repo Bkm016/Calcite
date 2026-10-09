@@ -45,7 +45,13 @@ function assetsMarker(paths: CalcitePaths, json: VersionJson): string | undefine
  */
 export async function assetsVerified(paths: CalcitePaths, json: VersionJson): Promise<boolean> {
   const marker = assetsMarker(paths, json);
-  return !!marker && stat(marker).then(() => true, () => false);
+  return (
+    !!marker &&
+    stat(marker).then(
+      () => true,
+      () => false,
+    )
+  );
 }
 
 export async function markAssetsVerified(paths: CalcitePaths, json: VersionJson): Promise<void> {
@@ -84,7 +90,10 @@ export async function prepareGame(paths: CalcitePaths, opts: PrepareOptions): Pr
   const required = requiredJavaMajor(json);
   const modded = !!spec && spec.kind !== 'fabric';
   if (modded && opts.headless && required < 9) {
-    throw new CalciteError('unsupported_loader', `${spec.kind} for Minecraft ${json.id} needs Java ${required}, which cannot run headless; use render "on-demand"`);
+    throw new CalciteError(
+      'unsupported_loader',
+      `${spec.kind} for Minecraft ${json.id} needs Java ${required}, which cannot run headless; use render "on-demand"`,
+    );
   }
   const java = await ensureJava(paths, opts.headless && required < 9 ? HEADLESS_MIN_JAVA : required, {
     javaPath: opts.javaPath,
@@ -144,7 +153,10 @@ async function ensureLoader(paths: CalcitePaths, json: VersionJson, spec: Loader
     await hmcDryLaunch(paths, json, spec, rt);
     const installed = await findLoader(paths, json.id, spec);
     if (!installed) {
-      throw new CalciteError('install_failed', `HeadlessMC did not install ${formatLoader(spec)} for Minecraft ${json.id} (is there a build for this version?)`);
+      throw new CalciteError(
+        'install_failed',
+        `HeadlessMC did not install ${formatLoader(spec)} for Minecraft ${json.id} (is there a build for this version?)`,
+      );
     }
     return installed;
   });
@@ -168,7 +180,13 @@ export async function installVersion(
   opts: InstallOptions = {},
 ): Promise<{ id: string; loader?: string; java: string; probe: string }> {
   const paths = opts.paths ?? resolvePaths();
-  const game = await prepareGame(paths, { version: spec, loader: opts.loader, javaPath: opts.javaPath, allowJavaDownload: opts.allowJavaDownload, onLine: opts.onLine });
+  const game = await prepareGame(paths, {
+    version: spec,
+    loader: opts.loader,
+    javaPath: opts.javaPath,
+    allowJavaDownload: opts.allowJavaDownload,
+    onLine: opts.onLine,
+  });
   await installProbe(paths);
   await hmcDryLaunch(paths, game.json, game.loader, game);
   return {

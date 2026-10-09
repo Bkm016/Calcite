@@ -27,7 +27,10 @@ test('parseServer', () => {
 });
 
 test('parseJavaSettings', () => {
-  assert.deepEqual(parseJavaSettings('    java.specification.version = 1.8\n    java.version = 1.8.0_402\n'), { major: 8, version: '1.8.0_402' });
+  assert.deepEqual(parseJavaSettings('    java.specification.version = 1.8\n    java.version = 1.8.0_402\n'), {
+    major: 8,
+    version: '1.8.0_402',
+  });
   assert.deepEqual(parseJavaSettings('    java.specification.version = 21\n    java.version = 21.0.5\n'), { major: 21, version: '21.0.5' });
   assert.equal(parseJavaSettings('garbage'), null);
 });
@@ -45,7 +48,10 @@ test('pickJava prefers exact major, falls back to newer only for >8', () => {
 });
 
 test('version json helpers', () => {
-  assert.equal(supportsQuickPlay({ arguments: { game: [{ rules: [], value: ['--quickPlayMultiplayer', '${quickPlayMultiplayer}'] }] } }), true);
+  assert.equal(
+    supportsQuickPlay({ arguments: { game: [{ rules: [], value: ['--quickPlayMultiplayer', '${quickPlayMultiplayer}'] }] } }),
+    true,
+  );
   assert.equal(supportsQuickPlay({ minecraftArguments: '--username ${auth_player_name}' }), false);
   assert.equal(requiredJavaMajor({}), 8);
   assert.equal(requiredJavaMajor({ javaVersion: { majorVersion: 21 } }), 21);
@@ -130,9 +136,21 @@ test('accounts store parsing, instance preparation and removal', async () => {
     await mkdir(join(auth, 'default'), { recursive: true });
     await mkdir(join(auth, 'last'), { recursive: true });
     const session = (name, id, token) => ({ minecraftProfile: { value: { id, name } }, token });
-    await writeFile(join(auth, 'default', '.accounts.json'), JSON.stringify({ accounts: { Alice: session('Alice', 'a-1', 1), Bob: session('Bob', 'b-2', 1) }, version: 0 }));
-    await writeFile(join(auth, 'last', '.accounts.json'), JSON.stringify({ accounts: { latest: [{ provider: 'default', name: 'Bob' }] }, version: 0 }));
-    assert.deepEqual((await listAccounts(paths)).map((a) => [a.name, a.uuid, a.primary]), [['Alice', 'a-1', false], ['Bob', 'b-2', true]]);
+    await writeFile(
+      join(auth, 'default', '.accounts.json'),
+      JSON.stringify({ accounts: { Alice: session('Alice', 'a-1', 1), Bob: session('Bob', 'b-2', 1) }, version: 0 }),
+    );
+    await writeFile(
+      join(auth, 'last', '.accounts.json'),
+      JSON.stringify({ accounts: { latest: [{ provider: 'default', name: 'Bob' }] }, version: 0 }),
+    );
+    assert.deepEqual(
+      (await listAccounts(paths)).map((a) => [a.name, a.uuid, a.primary]),
+      [
+        ['Alice', 'a-1', false],
+        ['Bob', 'b-2', true],
+      ],
+    );
 
     // a client location gets exactly the chosen session; a refreshed session is copied back
     const loc = join(home, 'instance');
@@ -140,7 +158,9 @@ test('accounts store parsing, instance preparation and removal', async () => {
     assert.equal(await prepareAccount(paths, loc, { type: 'microsoft', name: 'alice' }), 'Alice');
     const local = JSON.parse(await readFile(join(loc, '.auth', 'default', '.accounts.json'), 'utf8'));
     assert.deepEqual(Object.keys(local.accounts), ['Alice']);
-    assert.deepEqual(JSON.parse(await readFile(join(loc, '.auth', 'last', '.accounts.json'), 'utf8')).accounts.latest, [{ provider: 'default', name: 'Alice' }]);
+    assert.deepEqual(JSON.parse(await readFile(join(loc, '.auth', 'last', '.accounts.json'), 'utf8')).accounts.latest, [
+      { provider: 'default', name: 'Alice' },
+    ]);
     local.accounts.Alice.token = 2;
     await writeFile(join(loc, '.auth', 'default', '.accounts.json'), JSON.stringify(local));
     await syncAccount(paths, loc, 'Alice');
@@ -154,7 +174,10 @@ test('accounts store parsing, instance preparation and removal', async () => {
     await assert.rejects(readFile(join(loc, '.auth', 'default', '.accounts.json')));
 
     assert.equal(await removeAccount(paths, 'alice'), true);
-    assert.deepEqual((await listAccounts(paths)).map((a) => a.name), ['Bob']);
+    assert.deepEqual(
+      (await listAccounts(paths)).map((a) => a.name),
+      ['Bob'],
+    );
     assert.equal(await removeAccount(paths, 'nobody'), false);
   } finally {
     await rm(home, { recursive: true, force: true });
@@ -184,7 +207,10 @@ test('Feed keeps the newest entries and reads them by sequence', () => {
   assert.deepEqual(seqs(feed.since(8)), [9, 10]);
   assert.deepEqual(seqs(feed.since(0, (e) => e.even, 2)), [8, 10]);
   assert.equal(feed.find(7, (e) => e.even)?.seq, 8);
-  assert.equal(feed.find(10, () => true), undefined);
+  assert.equal(
+    feed.find(10, () => true),
+    undefined,
+  );
   assert.deepEqual(new Feed(3).since(), []);
 });
 
@@ -249,7 +275,11 @@ test('findLoader picks the requested or newest installed build', async () => {
   try {
     const paths = resolvePaths(home);
     const { mkdir } = await import('node:fs/promises');
-    for (const [id, inherits] of [['fabric-loader-0.19.5-1.21.11', '1.21.11'], ['fabric-loader-0.19.10-1.21.11', '1.21.11'], ['neoforge-21.1.200', '1.21.1']]) {
+    for (const [id, inherits] of [
+      ['fabric-loader-0.19.5-1.21.11', '1.21.11'],
+      ['fabric-loader-0.19.10-1.21.11', '1.21.11'],
+      ['neoforge-21.1.200', '1.21.1'],
+    ]) {
       await mkdir(join(paths.minecraft, 'versions', id), { recursive: true });
       await writeFile(join(paths.minecraft, 'versions', id, `${id}.json`), JSON.stringify({ id, inheritsFrom: inherits }));
     }
@@ -306,7 +336,11 @@ test('Mojang mappings compose with intermediary (tiny v1 and v2)', () => {
   ].join('\n');
   for (const tiny of [v1, v2]) {
     const target = parseTiny(tiny);
-    const out = compose(parseMojang(MOJANG), target, (c) => target.classes.get(c.obf.replace(/\./g, '/'))?.replace(/\//g, '.') ?? (c.obf === c.named ? c.named : undefined));
+    const out = compose(
+      parseMojang(MOJANG),
+      target,
+      (c) => target.classes.get(c.obf.replace(/\./g, '/'))?.replace(/\//g, '.') ?? (c.obf === c.named ? c.named : undefined),
+    );
     assert.equal(
       out,
       [
@@ -328,9 +362,20 @@ test('Mojang mappings compose with intermediary (tiny v1 and v2)', () => {
 });
 
 test('Mojang mappings compose with SRG (tsrg2)', () => {
-  const tsrg = ['tsrg2 obf srg id', 'fgo net/minecraft/src/C_1_ 1', '\ta f_91074_ 2', '\td ()V m_91398_ 3', '\t\t0 o p_0_ 4', '\tstatic', 'fzz net/minecraft/src/C_2_ 5'].join('\n');
+  const tsrg = [
+    'tsrg2 obf srg id',
+    'fgo net/minecraft/src/C_1_ 1',
+    '\ta f_91074_ 2',
+    '\td ()V m_91398_ 3',
+    '\t\t0 o p_0_ 4',
+    '\tstatic',
+    'fzz net/minecraft/src/C_2_ 5',
+  ].join('\n');
   const out = compose(parseMojang(MOJANG), parseTsrg(tsrg), (c) => c.named);
-  assert.match(out, /^net\.minecraft\.client\.Minecraft -> net\.minecraft\.client\.Minecraft:\n {4}net\.minecraft\.client\.player\.LocalPlayer player -> f_91074_\n {4}void tick\(\) -> m_91398_\n/);
+  assert.match(
+    out,
+    /^net\.minecraft\.client\.Minecraft -> net\.minecraft\.client\.Minecraft:\n {4}net\.minecraft\.client\.player\.LocalPlayer player -> f_91074_\n {4}void tick\(\) -> m_91398_\n/,
+  );
 });
 
 test('syncMods replaces only the mods Calcite placed', async () => {
@@ -342,7 +387,10 @@ test('syncMods replaces only the mods Calcite placed', async () => {
     const game = join(dir, 'game');
     await mkdir(join(game, 'mods'), { recursive: true });
     await writeFile(join(game, 'mods', 'mine.jar'), 'user');
-    await syncMods(game, [{ name: 'a.jar', file: join(dir, 'a.jar'), source: 'a' }, { name: 'b.jar', file: join(dir, 'b.jar'), source: 'b' }]);
+    await syncMods(game, [
+      { name: 'a.jar', file: join(dir, 'a.jar'), source: 'a' },
+      { name: 'b.jar', file: join(dir, 'b.jar'), source: 'b' },
+    ]);
     assert.deepEqual((await readdir(join(game, 'mods'))).sort(), ['.calcite-mods.json', 'a.jar', 'b.jar', 'mine.jar']);
     await syncMods(game, [{ name: 'b.jar', file: join(dir, 'b.jar'), source: 'b' }]);
     assert.deepEqual((await readdir(join(game, 'mods'))).sort(), ['.calcite-mods.json', 'b.jar', 'mine.jar']);
@@ -355,7 +403,10 @@ test('syncMods replaces only the mods Calcite placed', async () => {
 
 test('Client rejects mods without a loader', () => {
   assert.throws(() => new Client({ name: 'm', version: '1.21.11', mods: ['x.jar'], paths: resolvePaths('/tmp/calcite-unused') }), /loader/);
-  assert.throws(() => new Client({ name: 'm', version: '1.21.11', loader: 'quilt', paths: resolvePaths('/tmp/calcite-unused') }), /Unknown mod loader/);
+  assert.throws(
+    () => new Client({ name: 'm', version: '1.21.11', loader: 'quilt', paths: resolvePaths('/tmp/calcite-unused') }),
+    /Unknown mod loader/,
+  );
 });
 
 test('resolveExtensions accepts local jars and rejects missing ones', async () => {

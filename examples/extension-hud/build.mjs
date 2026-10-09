@@ -11,7 +11,11 @@ const api = join(here, '..', '..', 'vendor', 'calcite-probe.jar');
 const jar = join(here, 'calcite-hud.jar');
 rmSync(out, { recursive: true, force: true });
 mkdirSync(join(out, 'META-INF', 'services'), { recursive: true });
-execFileSync(jdkTool('javac'), ['--release', '8', '-Xlint:-options', '-encoding', 'UTF-8', '-cp', api, '-d', out, ...listJava(join(here, 'src'))], { stdio: 'inherit' });
+execFileSync(
+  jdkTool('javac'),
+  ['--release', '8', '-Xlint:-options', '-encoding', 'UTF-8', '-cp', api, '-d', out, ...listJava(join(here, 'src'))],
+  { stdio: 'inherit' },
+);
 // tells the probe which class implements the extension
 writeFileSync(join(out, 'META-INF', 'services', 'calcite.probe.api.CalciteExtension'), 'calcite.example.hud.HudExtension\n');
 rmSync(jar, { force: true });

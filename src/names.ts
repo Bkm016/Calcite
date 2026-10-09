@@ -44,7 +44,10 @@ export async function resolveNames(paths: CalcitePaths, json: VersionJson, clien
     return { kind: 'probe', candidates: [OFFICIAL] };
   }
   if (loader.kind === 'forge' && released < FORGE_MOJANG_CLASSES) {
-    return { kind: 'unsupported', reason: `Forge for Minecraft ${json.id} runs on MCP names, which the probe does not support (needs 1.17+)` };
+    return {
+      kind: 'unsupported',
+      reason: `Forge for Minecraft ${json.id} runs on MCP names, which the probe does not support (needs 1.17+)`,
+    };
   }
   // the exact switch to Mojang names is not tied to a version number for every build: let the probe check both
   const srg = await composeSrg(paths, json.id, mojang, loader);
@@ -123,7 +126,7 @@ export function parseTsrg(text: string): TargetNames {
   for (const line of text.split(/\r?\n/)) {
     if (!line || line.startsWith('tsrg2 ') || line.startsWith('\t\t')) continue;
     const p = line.trim().split(' ');
-    if (line[0] !== '\t') {
+    if (!line.startsWith('\t')) {
       owner = p[0];
       t.classes.set(owner, p[1]);
     } else if (p[1]?.startsWith('(')) {
@@ -137,7 +140,17 @@ export function parseTsrg(text: string): TargetNames {
 
 // ---------------------------------------------------------------- composition
 
-const PRIMITIVES: Record<string, string> = { boolean: 'Z', byte: 'B', char: 'C', short: 'S', int: 'I', long: 'J', float: 'F', double: 'D', void: 'V' };
+const PRIMITIVES: Record<string, string> = {
+  boolean: 'Z',
+  byte: 'B',
+  char: 'C',
+  short: 'S',
+  int: 'I',
+  long: 'J',
+  float: 'F',
+  double: 'D',
+  void: 'V',
+};
 
 interface MojangClass {
   named: string;
@@ -149,8 +162,8 @@ export function parseMojang(text: string): MojangClass[] {
   const classes: MojangClass[] = [];
   let current: MojangClass | undefined;
   for (const line of text.split(/\r?\n/)) {
-    if (!line || line[0] === '#') continue;
-    if (line[0] !== ' ') {
+    if (!line || line.startsWith('#')) continue;
+    if (!line.startsWith(' ')) {
       const m = /^(\S+) -> (\S+):$/.exec(line);
       current = m ? { named: m[1], obf: m[2], members: [] } : undefined;
       if (current) classes.push(current);
@@ -158,7 +171,8 @@ export function parseMojang(text: string): MojangClass[] {
     }
     const m = /^\s+(?:\d+:\d+:)?(\S+) ([^\s(]+)(?:\((.*)\))?(?::\d+:\d+)? -> (\S+)$/.exec(line);
     if (!current || !m) continue;
-    const [, type, name, params, obf] = m;
+    const [, type, name, , obf] = m;
+    const params = m[3] as string | undefined; // absent for fields
     current.members.push({
       text: params === undefined ? `${type} ${name}` : `${type} ${name}(${params})`,
       name,
@@ -222,7 +236,7 @@ async function writeComposed(file: string, build: () => Promise<string>): Promis
   await mkdir(join(file, '..'), { recursive: true });
   const tmp = `${file}.${process.pid}.tmp`;
   await writeFile(tmp, text);
-  await rename(tmp, file).catch(async (err) => {
+  await rename(tmp, file).catch(async (err: unknown) => {
     await rm(tmp, { force: true });
     if (!(await exists(file))) throw err;
   });
@@ -249,7 +263,11 @@ async function composeFabric(paths: CalcitePaths, mc: string, mojangFile: string
     const tiny = await readZipEntry(jar, 'mappings/mappings.tiny');
     if (!tiny) throw new Error(`${jar} contains no mappings/mappings.tiny`);
     const target = parseTiny(tiny.toString('utf8'));
-    return compose(parseMojang(await readFile(mojangFile, 'utf8')), target, (c) => target.classes.get(c.obf.replace(/\./g, '/'))?.replace(/\//g, '.') ?? (c.obf === c.named ? c.named : undefined));
+    return compose(
+      parseMojang(await readFile(mojangFile, 'utf8')),
+      target,
+      (c) => target.classes.get(c.obf.replace(/\./g, '/'))?.replace(/\//g, '.') ?? (c.obf === c.named ? c.named : undefined),
+    );
   });
 }
 
@@ -258,9 +276,17 @@ async function composeSrg(paths: CalcitePaths, mc: string, mojangFile: string, l
   const mcp = loaderGameArg(loader.json, '--fml.mcpVersion');
   const neoForm = loaderGameArg(loader.json, '--fml.neoFormVersion');
   const source = neoForm
-    ? { repo: 'https://maven.neoforged.net/releases', path: mavenPath('net.neoforged', 'neoform', `${mc}-${neoForm}`, 'zip'), tag: `neoform-${neoForm}` }
+    ? {
+        repo: 'https://maven.neoforged.net/releases',
+        path: mavenPath('net.neoforged', 'neoform', `${mc}-${neoForm}`, 'zip'),
+        tag: `neoform-${neoForm}`,
+      }
     : mcp
-      ? { repo: 'https://maven.minecraftforge.net', path: mavenPath('de.oceanlabs.mcp', 'mcp_config', `${mc}-${mcp}`, 'zip'), tag: `mcp-${mcp}` }
+      ? {
+          repo: 'https://maven.minecraftforge.net',
+          path: mavenPath('de.oceanlabs.mcp', 'mcp_config', `${mc}-${mcp}`, 'zip'),
+          tag: `mcp-${mcp}`,
+        }
       : null;
   if (!source) return null;
   const file = join(paths.mappings, `${mc}-srg-${source.tag}-c${COMPOSE_FORMAT}.txt`);

@@ -24,16 +24,19 @@ export class BackgroundTasks {
 
   private start(client: Client, name: string, run: () => Promise<unknown>): { started: string; next: string } {
     const job: Job = { name, startedAt: Date.now(), done: Promise.resolve() };
-    job.done = run().then(
-      (result) => {
-        job.result = result;
-      },
-      (err: Error & { code?: string }) => {
-        job.error = { code: err.code, message: err.message };
-      },
-    ).finally(() => {
-      job.finishedAt = Date.now();
-    });
+    job.done = run()
+      .then(
+        (result) => {
+          job.result = result;
+        },
+        (err: unknown) => {
+          const e = err as Error & { code?: string };
+          job.error = { code: e.code, message: e.message };
+        },
+      )
+      .finally(() => {
+        job.finishedAt = Date.now();
+      });
     this.jobs.set(client.options.name, job);
     return { started: name, next: 'Call get_task to follow it (waitSeconds waits for it to end); stop_actions cancels it' };
   }

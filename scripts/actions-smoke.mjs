@@ -16,7 +16,10 @@ await runE2E('ACTIONS', async (t) => {
   await sleep(1000);
 
   const state = await client.state();
-  t.check('state has food and game mode', state.player.food === 20 && state.player.gameMode === 'survival', { food: state.player.food, gameMode: state.player.gameMode });
+  t.check('state has food and game mode', state.player.food === 20 && state.player.gameMode === 'survival', {
+    food: state.player.food,
+    gameMode: state.player.gameMode,
+  });
 
   const look = await client.look({ yaw: 90, pitch: 10 });
   t.check('look sets rotation', Math.abs(look.yaw - 90) < 0.01 && Math.abs(look.pitch - 10) < 0.01, look);
@@ -27,10 +30,17 @@ await runE2E('ACTIONS', async (t) => {
     const b = await client.block({ x: bx + 2, y: by, z: bz });
     return b.air ? b : undefined;
   });
-  t.check('dig breaks dirt in survival', before.id === 'minecraft:dirt' && dug.broken && dug.ticks > 5 && !!after, { dug, before: before.id });
+  t.check('dig breaks dirt in survival', before.id === 'minecraft:dirt' && dug.broken && dug.ticks > 5 && !!after, {
+    dug,
+    before: before.id,
+  });
 
   let inv = await client.inventory();
-  t.check('inventory lists given items', slotOf(inv, 'minecraft:diamond_sword') !== undefined && slotOf(inv, 'minecraft:oak_planks') !== undefined, inv.items);
+  t.check(
+    'inventory lists given items',
+    slotOf(inv, 'minecraft:diamond_sword') !== undefined && slotOf(inv, 'minecraft:oak_planks') !== undefined,
+    inv.items,
+  );
 
   const planks = slotOf(inv, 'minecraft:oak_planks');
   const sel = await client.selectSlot(planks);
@@ -77,19 +87,31 @@ await runE2E('ACTIONS', async (t) => {
 
   const opened = await client.use({ block: { x: bx, y: by, z: bz + 2 } });
   const chest = await client.container({ waitMs: 3000 });
-  t.check('use opens a chest', chest.open && chest.containerSlots === 27 && chest.items?.[0]?.id === 'minecraft:diamond', { opened, type: chest.type, title: chest.title, first: chest.items?.[0] });
+  t.check('use opens a chest', chest.open && chest.containerSlots === 27 && chest.items?.[0]?.id === 'minecraft:diamond', {
+    opened,
+    type: chest.type,
+    title: chest.title,
+    first: chest.items?.[0],
+  });
   const moved2 = await client.click(0, { mode: 'quick_move' });
-  t.check('quick_move takes the diamonds', !moved2.items.some((i) => i.slot < moved2.containerSlots && i.id === 'minecraft:diamond'), moved2.items);
+  t.check(
+    'quick_move takes the diamonds',
+    !moved2.items.some((i) => i.slot < moved2.containerSlots && i.id === 'minecraft:diamond'),
+    moved2.items,
+  );
   await client.closeContainer();
   await sleep(300);
   const closed = await client.container();
   inv = await client.inventory();
-  t.check('chest closed, diamonds in inventory', !closed.open && inv.items.some((i) => i.id === 'minecraft:diamond' && i.count === 5), inv.items);
+  t.check(
+    'chest closed, diamonds in inventory',
+    !closed.open && inv.items.some((i) => i.id === 'minecraft:diamond' && i.count === 5),
+    inv.items,
+  );
 
   await client.selectSlot(planks);
   await sleep(200);
   const dropped = await client.drop();
   const item = await until(async () => (await client.entities({ type: 'item', radius: 6 })).length > 0, 3000);
   t.check('drop throws an item', dropped.id === 'minecraft:oak_planks' && dropped.count === 1 && !!item, dropped);
-
 });

@@ -6,7 +6,11 @@ export function registerActTools({ server, manager, tasks }: ToolContext): void 
   tool(
     server,
     'send_chat',
-    { title: 'Send chat', description: 'Sends a chat message as the player.', inputSchema: { client: clientName, message: z.string().min(1).max(256) } },
+    {
+      title: 'Send chat',
+      description: 'Sends a chat message as the player.',
+      inputSchema: { client: clientName, message: z.string().min(1).max(256) },
+    },
     async ({ client, message }) => {
       await manager.resolve(client).chat(message);
       return 'sent';
@@ -18,7 +22,8 @@ export function registerActTools({ server, manager, tasks }: ToolContext): void 
     'run_command',
     {
       title: 'Run command',
-      description: 'Runs a command as the player (leading "/" optional) and returns the chat lines that arrived within 750 ms; use wait_for for slower replies.',
+      description:
+        'Runs a command as the player (leading "/" optional) and returns the chat lines that arrived within 750 ms; use wait_for for slower replies.',
       inputSchema: { client: clientName, command: z.string().min(1).max(32_000) },
     },
     async ({ client, command }) => {
@@ -30,10 +35,15 @@ export function registerActTools({ server, manager, tasks }: ToolContext): void 
     },
   );
 
-  tool(server, 'respawn', { title: 'Respawn', description: 'Respawns the player after death.', inputSchema: { client: clientName } }, async ({ client }) => {
-    await manager.resolve(client).respawn();
-    return 'respawned';
-  });
+  tool(
+    server,
+    'respawn',
+    { title: 'Respawn', description: 'Respawns the player after death.', inputSchema: { client: clientName } },
+    async ({ client }) => {
+      await manager.resolve(client).respawn();
+      return 'respawned';
+    },
+  );
 
   tool(
     server,
@@ -105,7 +115,11 @@ export function registerActTools({ server, manager, tasks }: ToolContext): void 
   tool(
     server,
     'stop_actions',
-    { title: 'Stop actions', description: 'Releases all keys and cancels the running walk_to, dig, craft or held use.', inputSchema: { client: clientName } },
+    {
+      title: 'Stop actions',
+      description: 'Releases all keys and cancels the running walk_to, dig, craft or held use.',
+      inputSchema: { client: clientName },
+    },
     async ({ client }) => {
       await manager.resolve(client).stopActions();
       return 'stopped';
@@ -119,7 +133,10 @@ export function registerActTools({ server, manager, tasks }: ToolContext): void 
       title: 'Running action',
       description:
         'Progress of the running walk_to, dig or craft (waypoint, distance, crafted count...) and the outcome of the last one started with background: true.',
-      inputSchema: { client: clientName, waitSeconds: z.number().min(0).max(120).default(0).describe('Wait up to this long for the background action to end') },
+      inputSchema: {
+        client: clientName,
+        waitSeconds: z.number().min(0).max(120).default(0).describe('Wait up to this long for the background action to end'),
+      },
     },
     async ({ client, waitSeconds }) => tasks.status(manager.resolve(client), waitSeconds * 1000),
   );
@@ -129,7 +146,8 @@ export function registerActTools({ server, manager, tasks }: ToolContext): void 
     'attack',
     {
       title: 'Attack (left click)',
-      description: 'Attacks the entity with this id (from get_entities; the player turns to it, must be within reach) or, without an id, whatever the crosshair points at.',
+      description:
+        'Attacks the entity with this id (from get_entities; the player turns to it, must be within reach) or, without an id, whatever the crosshair points at.',
       inputSchema: { client: clientName, entityId: z.number().int().optional() },
     },
     async ({ client, entityId }) => manager.resolve(client).attack(entityId),
@@ -163,8 +181,18 @@ export function registerActTools({ server, manager, tasks }: ToolContext): void 
     'dig',
     {
       title: 'Mine a block',
-      description: 'Mines the block at x/y/z like a player holding left click (real break time in survival, instant in creative). The block must be within reach.',
-      inputSchema: { client: clientName, x: coord, y: coord, z: coord, face, stopOnDamage, background, timeoutSeconds: timeoutSeconds(30, 300) },
+      description:
+        'Mines the block at x/y/z like a player holding left click (real break time in survival, instant in creative). The block must be within reach.',
+      inputSchema: {
+        client: clientName,
+        x: coord,
+        y: coord,
+        z: coord,
+        face,
+        stopOnDamage,
+        background,
+        timeoutSeconds: timeoutSeconds(30, 300),
+      },
     },
     async ({ client, timeoutSeconds: seconds, face: f, stopOnDamage: stop, background: bg, ...pos }) => {
       const target = manager.resolve(client);
