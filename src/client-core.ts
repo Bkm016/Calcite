@@ -4,7 +4,7 @@ import { prepareAccount, syncAccount } from './accounts.js';
 import { which } from './display.js';
 import { Feed } from './feed.js';
 import { GameRun } from './game-run.js';
-import { killTree, runHmc, writeHmcProfile, type HmcRun, type HmcRunOptions } from './hmc.js';
+import { killTree, runHmc, writeHmcProfile, type HmcRunOptions } from './hmc.js';
 import { assetsVerified, installProbe, markAssetsVerified, prepareGame, type PreparedGame } from './install.js';
 import {
   BackendWatch,
@@ -30,6 +30,7 @@ import {
   CalciteError,
   defaultUsername,
   parseServer,
+  parseWorld,
   type Account,
   type ChatLine,
   type ClientEvents,
@@ -41,6 +42,7 @@ import {
   type Phase,
   type RenderMode,
   type ServerAddress,
+  type WorldOptions,
 } from './types.js';
 
 const NAME_RE = /^[A-Za-z0-9_.-]{1,64}$/;
@@ -58,6 +60,7 @@ export abstract class ClientCore extends EventEmitter<ClientEvents> {
   readonly render: RenderMode;
   readonly account: Account;
   readonly server?: ServerAddress;
+  readonly world?: WorldOptions;
 
   protected phaseValue: Phase = 'idle';
   protected readonly logs = new Feed<LogLine>(MAX_LOG);
@@ -96,7 +99,9 @@ export abstract class ClientCore extends EventEmitter<ClientEvents> {
     if (this.account.type === 'offline' && !/^[A-Za-z0-9_]{3,16}$/.test(this.account.username)) {
       throw new CalciteError('bad_username', `Offline username must be 3-16 letters, digits or underscores: "${this.account.username}"`);
     }
+    if (options.server && options.world) throw new CalciteError('bad_option', 'Pass either a server or a world, not both');
     this.server = options.server ? parseServer(options.server) : undefined;
+    this.world = options.world ? parseWorld(options.world) : undefined;
     if (!parseLoader(options.loader) && options.mods?.length) {
       throw new CalciteError('bad_mod', 'Mods need a mod loader (loader "fabric", "forge" or "neoforge")');
     }
@@ -142,7 +147,7 @@ export abstract class ClientCore extends EventEmitter<ClientEvents> {
 
   /**
    * Prepares everything (Java, game files, mappings), launches the client and resolves once it is in a world
-   * (or on the title screen when no server is configured).
+   * (or on the title screen when neither a server nor a world is configured).
    */
   async start(): Promise<ClientStatus> {
     if (!['idle', 'stopped', 'crashed'].includes(this.phaseValue)) {
@@ -305,11 +310,7 @@ export abstract class ClientCore extends EventEmitter<ClientEvents> {
     let launched = false;
     const backend = new BackendWatch((errors) => {
       if (run !== this.current || this.stopping) return;
-      this.fatalCode = 'renderer_unavailable';
-      this.lastError = `No graphics backend could be created: ${errors.join('; ')}. ${noBackendHint(process.platform)}`;
-      this.note(this.lastError);
-      this.setPhase('crashed');
-      if (run.hmc) void killTree(run.hmc.child);
+      this.fail('renderer_unavailable', `No graphics backend could be created: ${errors.join('; ')}. ${noBackendHint(process.platform)}`);
     });
     const hmc = runHmc({
       ...opts,
@@ -351,7 +352,7 @@ export abstract class ClientCore extends EventEmitter<ClientEvents> {
     if (JSON.stringify(prev) !== JSON.stringify(state)) this.emit('state', state);
     switch (gameStage(state)) {
       case 'mod_error':
-        if (run.hmc && !this.fatalCode) this.failModLoading(run.hmc, state.screen ?? '?');
+        if (!this.fatalCode) this.failModLoading(state.screen ?? '?');
         break;
       case 'playing':
         if (this.phaseValue !== 'in_game') {
@@ -363,8 +364,10 @@ export abstract class ClientCore extends EventEmitter<ClientEvents> {
         }
         break;
       case 'title':
+        if (this.joinRequested || this.phaseValue !== 'connecting') break;
         // Pre-1.20 versions may ignore --server (e.g. 1.16.4+ when multiplayer privileges cannot be checked)
-        if (this.server && !this.joinRequested && this.phaseValue === 'connecting') this.joinFromTitle(run.probe, this.server);
+        if (this.server) this.joinFromTitle(run.probe, 'connect', { host: this.server.host, port: this.server.port });
+        else if (this.world) this.joinFromTitle(run.probe, 'open_world', { ...this.world });
         break;
       case 'disconnected':
         if (this.phaseValue !== 'disconnected' && this.phaseValue !== 'reconnecting') {
@@ -379,25 +382,35 @@ export abstract class ClientCore extends EventEmitter<ClientEvents> {
   }
 
   /** Forge/NeoForge stay on an error screen when mods fail to load; relaunching would not help. */
-  private failModLoading(run: HmcRun, screen: string): void {
+  private failModLoading(screen: string): void {
     const errors = this.logs.since(0, (l) => l.source === 'game' && MOD_ERROR_LINE.test(l.line), 12);
-    this.fatalCode = 'mod_loading_failed';
-    this.lastError = `Mod loading failed (${screen}); check the mods and the loader version:\n${errors.map((l) => l.line).join('\n')}`;
-    this.note(this.lastError);
-    this.setPhase('crashed');
-    void killTree(run.child);
+    this.fail(
+      'mod_loading_failed',
+      `Mod loading failed (${screen}); check the mods and the loader version:\n${errors.map((l) => l.line).join('\n')}`,
+    );
   }
 
-  private joinFromTitle(probe: ProbeServer, server: ServerAddress): void {
+  /** A failure relaunching cannot fix: start() reports {@code code} and the game is killed. */
+  private fail(code: string, message: string): void {
+    this.fatalCode = code;
+    this.lastError = message;
+    this.note(message);
+    this.setPhase('crashed');
+    if (this.current?.hmc) void killTree(this.current.hmc.child);
+  }
+
+  private joinFromTitle(probe: ProbeServer, op: 'connect' | 'open_world', args: Record<string, unknown>): void {
     this.joinRequested = true;
-    this.note(`joining ${server.host}:${server.port} from the title screen`);
-    probe.request('connect', { host: server.host, port: server.port }).catch((err: unknown) => {
-      this.note(`join failed: ${(err as Error).message}`);
+    this.note(`${op} ${JSON.stringify(args)} from the title screen`);
+    probe.request(op, args, 90_000).catch((err: unknown) => {
+      const e = err as { code?: string; message: string };
+      this.note(`join failed: ${e.message}`);
+      if (e.code === 'unknown_world') this.fail(e.code, e.message);
     });
   }
 
   private async maybeReconnect(): Promise<void> {
-    if (this.stopping || this.relaunching || !this.server) return;
+    if (this.stopping || this.relaunching || !(this.server ?? this.world)) return;
     if (this.reconnects >= reconnectLimit(this.options.reconnect)) {
       this.note(`not reconnecting: ${this.reconnects} attempts used`);
       return;
@@ -442,7 +455,7 @@ export abstract class ClientCore extends EventEmitter<ClientEvents> {
     for (;;) {
       const phase = this.phaseValue;
       if (phase === 'in_game') return;
-      if (!this.server && this.lastState?.ready && this.lastState.loading === false && phase === 'connecting') return;
+      if (!this.server && !this.world && this.lastState?.ready && this.lastState.loading === false && phase === 'connecting') return;
       if (phase === 'crashed') throw new CalciteError(this.fatalCode ?? 'crashed', this.lastError ?? 'The game crashed during startup');
       if (phase === 'disconnected' && reconnectLimit(this.options.reconnect) === 0)
         throw new CalciteError('disconnected', this.lastError ?? 'Disconnected');
@@ -471,8 +484,20 @@ export abstract class ClientCore extends EventEmitter<ClientEvents> {
   /** Stops the game and releases all resources. */
   async stop(): Promise<void> {
     if (this.phaseValue === 'stopped' || this.phaseValue === 'idle') return;
+    const saveWorld = this.world && this.phaseValue === 'in_game' && this.probeConnected;
     this.setPhase('stopping');
+    if (saveWorld) await this.closeWorld();
     await this.shutdown('stopped');
+  }
+
+  /** Lets the integrated server save and stop before the game is killed. */
+  private async closeWorld(): Promise<void> {
+    try {
+      await this.requireProbe().request('close_world', {}, 60_000);
+      this.note('world saved');
+    } catch (err) {
+      this.note(`saving the world failed: ${(err as Error).message}`);
+    }
   }
 
   status(): ClientStatus {
@@ -487,6 +512,7 @@ export abstract class ClientCore extends EventEmitter<ClientEvents> {
       headless: this.headlessValue,
       account: this.account,
       server: this.server,
+      world: this.world,
       gameDir: this.gameDir,
       pid: this.current?.hmc?.child.pid,
       java: this.game?.java.version,

@@ -1,4 +1,4 @@
-export { Client, CalciteError, installVersion, parseServer } from './client.js';
+export { Client, CalciteError, installVersion, parseServer, parseWorld } from './client.js';
 export type {
   Account,
   BlockFace,
@@ -39,6 +39,7 @@ export type {
   TransferResult,
   WalkOptions,
   WalkResult,
+  WorldOptions,
 } from './client.js';
 export { listAccounts, removeAccount, startLogin } from './accounts.js';
 export type { AccountInfo, LoginHandle } from './accounts.js';

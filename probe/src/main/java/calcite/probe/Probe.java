@@ -223,6 +223,7 @@ public final class Probe {
         Ops.Module[] modules = {
                 world, controls, status, actions, r,
                 new Session(g, ref),
+                new Worlds(g, ref),
                 new Inventory(g, ref, menus),
                 new Navigator(g, aim, controls, terrain, workers),
                 new BlockSearch(g, ref, world),

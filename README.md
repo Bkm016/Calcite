@@ -125,7 +125,7 @@ calcite launch play.example.com -V 1.21.11 -n Bot1
 
 | 命令 | 说明 |
 | --- | --- |
-| `calcite launch [server]` | 启动客户端并在终端中交互 |
+| `calcite launch [server]` | 启动客户端并在终端中交互；`-w <存档>` 进入单人世界 |
 | `calcite install [version]` | 预下载指定版本（客户端、库、资源、Java），不启动游戏；`-l, --loader` 同时安装模组加载器 |
 | `calcite versions` | 列出可用版本（`-t release\|snapshot\|old_beta\|old_alpha\|all`，`-l <数量>`） |
 | `calcite login` | 微软账号登录（设备码） |
@@ -146,6 +146,9 @@ calcite launch play.example.com -V 1.21.11 -n Bot1
 | `-l, --loader <loader>` | — | 模组加载器：`fabric`、`forge`、`neoforge`，可加 `@<版本>`，见[模组](#模组) |
 | `--mod <spec>` | — | 加载模组，可重复；需同时指定加载器 |
 | `--ext <jar>` | — | 加载探针扩展（本地 jar 或 URL），可重复；游戏事件与扩展事件输出到标准错误 |
+| `-w, --world <name>` | — | 进入单人世界（不加入服务器），存档不存在时新建 |
+| `--game-mode <mode>` | `survival` | 新建世界的游戏模式：`survival`、`creative`、`hardcore` |
+| `--seed <seed>` | 随机 | 新建世界的种子 |
 | `--java <path>` | 自动选择 | 指定游戏使用的 Java |
 | `--no-java-download` | — | 禁止自动下载 Java |
 | `--memory <size>` | `2G` | 最大堆内存 |
@@ -160,6 +163,15 @@ calcite login                                        # 只需执行一次，按�
 calcite accounts
 calcite launch mc.example.com -V 1.21.11 --microsoft
 ```
+
+### 单人世界
+
+```bash
+calcite launch -w 生存测试 -V 1.21.11                 # 存档不存在时新建，允许作弊
+calcite launch -w Creative --game-mode creative --seed 42
+```
+
+存档位于实例目录的 `saves/` 下，`stop()` 或 `:quit` 会先让内置服务器保存世界再退出。
 
 ## MCP 服务器
 
@@ -263,7 +275,8 @@ await bot.stop();
 | --- | --- |
 | `name` | 实例名，只允许字母、数字、`-`、`_`、`.` |
 | `version` | 版本号、`release` 或 `snapshot` |
-| `server` | `host[:port]`；省略时停留在标题界面 |
+| `server` | `host[:port]`；与 `world` 都省略时停留在标题界面 |
+| `world` | 单人世界：存档名，或 `{ name, create?, gameMode?, seed? }`；存档不存在时默认新建（允许作弊），`stop()` 时先存档 |
 | `account` | `{ type: 'offline', username }` 或 `{ type: 'microsoft', name? }` |
 | `render` | `on-demand`（默认）、`always`、`off` |
 | `loader` | 模组加载器：`fabric`、`forge`、`neoforge`，可加 `@<版本>` |
@@ -280,7 +293,7 @@ await bot.stop();
 
 | 方法 | 说明 |
 | --- | --- |
-| `start()` / `stop()` | 启动（进入服务器后返回）/ 停止 |
+| `start()` / `stop()` | 启动（进入服务器或单人世界后返回）/ 停止 |
 | `prepare()` | 仅下载与校验依赖 |
 | `status()` | 生命周期阶段、最近错误、玩家信息 |
 | `state()` | 游戏状态 |

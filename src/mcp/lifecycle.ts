@@ -11,7 +11,7 @@ export function registerLifecycleTools({ server, manager, paths, defaults }: Too
     {
       title: 'Launch a Minecraft client',
       description:
-        'Downloads (if needed) and starts a Minecraft client, optionally joining a server. Resolves once the player is in the world (or on the title screen without a server).',
+        'Downloads (if needed) and starts a Minecraft client that joins a server or plays a singleplayer world. Resolves once the player is in the world (or on the title screen with neither).',
       inputSchema: {
         name: z
           .string()
@@ -33,6 +33,15 @@ export function registerLifecycleTools({ server, manager, paths, defaults }: Too
           .optional()
           .describe('Probe extension jars (local paths or http(s) URLs) that add commands and events; see list_extensions'),
         server: z.string().optional().describe('host[:port] to join'),
+        world: z
+          .object({
+            name: z.string().describe('Save name (letters, digits, - _ and inner spaces)'),
+            create: z.boolean().optional().describe('Create it when missing (default true)'),
+            gameMode: z.enum(['survival', 'creative', 'hardcore']).optional().describe('Game mode of a new world (default survival)'),
+            seed: z.string().optional().describe('Seed of a new world'),
+          })
+          .optional()
+          .describe('Singleplayer world to play in instead of joining a server; new worlds allow commands'),
         username: z.string().optional().describe('Offline username (3-16 chars). Ignored when microsoft is set'),
         microsoft: z
           .union([z.boolean(), z.string()])
@@ -63,6 +72,7 @@ export function registerLifecycleTools({ server, manager, paths, defaults }: Too
         mods: a.mods,
         extensions: a.extensions ?? defaults.extensions,
         server: a.server,
+        world: a.world,
         account,
         render: a.render ?? defaults.render,
         memory: a.memory ?? defaults.memory,

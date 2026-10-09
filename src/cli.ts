@@ -35,6 +35,9 @@ interface LaunchOptions {
   loader?: string;
   mod: string[];
   ext: string[];
+  world?: string;
+  gameMode: 'survival' | 'creative' | 'hardcore';
+  seed?: string;
   username?: string;
   microsoft?: string | true;
   render: RenderMode;
@@ -62,6 +65,9 @@ program
   .option('-l, --loader <loader>', 'mod loader: fabric, forge or neoforge, optionally @version (e.g. fabric@0.19.5)')
   .option('--mod <spec>', 'mod jar, folder, URL or modrinth:<project>[@version] (repeatable; needs --loader)', collect, [])
   .option('--ext <jar>', 'probe extension jar or URL (repeatable)', collect, [])
+  .option('-w, --world <name>', 'play singleplayer in this world (created when missing) instead of joining a server')
+  .addOption(new Option('--game-mode <mode>', 'game mode of a new world').choices(['survival', 'creative', 'hardcore']).default('survival'))
+  .option('--seed <seed>', 'seed of a new world')
   .option('-u, --username <name>', 'offline username (default: the client name)')
   .option('-m, --microsoft [account]', 'use a stored Microsoft account (primary one, or by name)')
   .addOption(new Option('-r, --render <mode>', 'renderer mode').choices(['on-demand', 'always', 'off']).default('on-demand'))
@@ -80,6 +86,7 @@ program
       mods: o.mod,
       extensions: o.ext,
       server,
+      world: o.world ? { name: o.world, gameMode: o.gameMode, seed: o.seed } : undefined,
       account,
       render: o.render,
       javaPath: o.java,

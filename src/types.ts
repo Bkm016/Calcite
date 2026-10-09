@@ -43,8 +43,10 @@ export interface ClientOptions {
    * They add commands ({@link ExtensionCommand}) and events to the bot; see the README.
    */
   extensions?: string[];
-  /** Server to join ("host[:port]"). Without a server the client stays on the title screen. */
+  /** Server to join ("host[:port]"). Without a server or a world the client stays on the title screen. */
   server?: string | ServerAddress;
+  /** Singleplayer world to play in instead of a server: a save name, created when missing. */
+  world?: string | WorldOptions;
   /** Account: offline (any username, for online-mode=false servers) or a stored Microsoft account. */
   account?: Account;
   /**
@@ -381,6 +383,7 @@ export interface ClientStatus {
   headless: boolean;
   account: Account;
   server?: ServerAddress;
+  world?: WorldOptions;
   gameDir: string;
   pid?: number;
   java?: string;
@@ -412,6 +415,27 @@ export class CalciteError extends Error {
     super(message);
     this.name = 'CalciteError';
   }
+}
+
+export interface WorldOptions {
+  /** Save folder name (letters, digits, - _ and spaces). */
+  name: string;
+  /** Create the world when it does not exist (default true). */
+  create?: boolean;
+  /** Game mode of a new world (default survival); new worlds always allow commands. */
+  gameMode?: 'survival' | 'creative' | 'hardcore';
+  /** Seed of a new world. */
+  seed?: string;
+}
+
+const WORLD_NAME_RE = /^[\p{L}\p{N}_-](?:[\p{L}\p{N} _-]{0,62}[\p{L}\p{N}_-])?$/u;
+
+export function parseWorld(world: string | WorldOptions): WorldOptions {
+  const w = typeof world === 'string' ? { name: world } : world;
+  if (!WORLD_NAME_RE.test(w.name)) {
+    throw new CalciteError('bad_world', `Invalid world name "${w.name}" (allowed: letters, digits, - _ and inner spaces, up to 64)`);
+  }
+  return { create: true, gameMode: 'survival', ...w };
 }
 
 export function parseServer(server: string | ServerAddress): ServerAddress {
