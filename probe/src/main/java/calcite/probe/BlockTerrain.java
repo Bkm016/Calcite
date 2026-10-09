@@ -130,7 +130,7 @@ final class BlockTerrain {
     private double collisionHeight(Object state, Object level, Object pos) throws Exception {
         Method getShape = ref.method(state.getClass(), "getCollisionShape", 2);
         if (getShape == null) {
-            return Boolean.TRUE.equals(game.optCall(state, "isAir")) ? 0 : 1;
+            return game.isAir(state) ? 0 : 1;
         }
         Object shape = getShape.invoke(state, level, pos);
         if (Boolean.TRUE.equals(game.optCall(shape, "isEmpty"))) {

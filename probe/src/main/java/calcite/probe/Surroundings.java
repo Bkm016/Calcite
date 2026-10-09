@@ -54,7 +54,7 @@ final class Surroundings implements Ops.Module {
             out.put("x", pos[0]);
             out.put("y", pos[1]);
             out.put("z", pos[2]);
-            Double yaw = game.rotation(player, "getYRot", "yRot");
+            Double yaw = game.yaw(player);
             out.put("facing", yaw == null ? null : facing(yaw));
             out.putAll(environment(level, pos));
             out.put("entities", entities(mc, player, pos, radius, marks));
@@ -146,7 +146,7 @@ final class Surroundings implements Ops.Module {
             for (int z = pz - radius; z <= pz + radius; z++) {
                 for (int y = py - 3; y <= py + 4; y++) {
                     Object state = view.state(x, y, z);
-                    String id = state == null || Boolean.TRUE.equals(game.optCall(state, "isAir")) ? null : world.blockId(state);
+                    String id = state == null || game.isAir(state) ? null : world.blockId(state);
                     if (id == null) {
                         continue;
                     }

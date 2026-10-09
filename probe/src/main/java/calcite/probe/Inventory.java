@@ -85,7 +85,7 @@ final class Inventory implements Ops.Module {
         if (menu == null) {
             return out;
         }
-        out.put("containerId", game.optGet(menu, "containerId"));
+        out.put("containerId", game.containerId(menu));
         if (open) {
             out.put("type", menus.menuType(menu));
         }

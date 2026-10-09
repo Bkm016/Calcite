@@ -40,7 +40,7 @@ final class Aim {
     /** Turns horizontally towards (x, z), keeping the pitch. */
     void face(Object player, double x, double z) throws Exception {
         double[] pos = game.position(player);
-        Double pitch = game.rotation(player, "getXRot", "xRot");
+        Double pitch = game.pitch(player);
         setRotation(player, yawTowards(x - pos[0], z - pos[2]), pitch == null ? 0 : pitch);
     }
 

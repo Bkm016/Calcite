@@ -141,8 +141,8 @@ public final class Game {
             m.put("y", pos[1]);
             m.put("z", pos[2]);
         }
-        m.put("yaw", rotation(e, "getYRot", "yRot"));
-        m.put("pitch", rotation(e, "getXRot", "xRot"));
+        m.put("yaw", yaw(e));
+        m.put("pitch", pitch(e));
         m.put("name", text(optCall(e, "getName")));
         Object custom = optCall(e, "getCustomName");
         if (custom != null) {
@@ -203,12 +203,32 @@ public final class Game {
         return null;
     }
 
-    Double rotation(Object e, String method, String field) {
+    /** Horizontal rotation of an entity in degrees, or null when unknown. */
+    Double yaw(Object e) {
+        return rotation(e, "getYRot", "yRot");
+    }
+
+    /** Vertical rotation of an entity in degrees, or null when unknown. */
+    Double pitch(Object e) {
+        return rotation(e, "getXRot", "xRot");
+    }
+
+    private Double rotation(Object e, String method, String field) {
         Object v = optCall(e, method);
         if (v == null) {
             v = optGet(e, field);
         }
         return v instanceof Number ? ((Number) v).doubleValue() : null;
+    }
+
+    /** True for an air block state. */
+    boolean isAir(Object state) {
+        return Boolean.TRUE.equals(optCall(state, "isAir"));
+    }
+
+    /** Id of the menu a player has open, used by every container click. */
+    Object containerId(Object menu) {
+        return optGet(menu, "containerId");
     }
 
     /** Health of a living entity, or -1 when unknown. */

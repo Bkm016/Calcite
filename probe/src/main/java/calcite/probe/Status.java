@@ -71,8 +71,8 @@ final class Status implements Ops.Module {
             p.put("y", pos[1]);
             p.put("z", pos[2]);
         }
-        p.put("yaw", game.rotation(player, "getYRot", "yRot"));
-        p.put("pitch", game.rotation(player, "getXRot", "xRot"));
+        p.put("yaw", game.yaw(player));
+        p.put("pitch", game.pitch(player));
         double health = game.health(player);
         if (health >= 0) {
             p.put("health", health);

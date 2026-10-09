@@ -40,13 +40,13 @@ final class Actions implements Ops.Module {
             if (at != null) {
                 aim.lookAt(player, at[0], at[1], at[2]);
             } else {
-                Double y = yaw != null ? yaw : game.rotation(player, "getYRot", "yRot");
-                Double p = pitch != null ? pitch : game.rotation(player, "getXRot", "xRot");
+                Double y = yaw != null ? yaw : game.yaw(player);
+                Double p = pitch != null ? pitch : game.pitch(player);
                 aim.setRotation(player, y == null ? 0 : y, p == null ? 0 : p);
             }
             Map<String, Object> out = new LinkedHashMap<String, Object>();
-            out.put("yaw", game.rotation(player, "getYRot", "yRot"));
-            out.put("pitch", game.rotation(player, "getXRot", "xRot"));
+            out.put("yaw", game.yaw(player));
+            out.put("pitch", game.pitch(player));
             return out;
         });
     }
@@ -117,7 +117,7 @@ final class Actions implements Ops.Module {
         @Override
         void start(Object mc, Object player) throws Exception {
             Object state = world.blockState(mc, pos);
-            if (state == null || Boolean.TRUE.equals(game.optCall(state, "isAir"))) {
+            if (state == null || game.isAir(state)) {
                 throw new ProbeException("no_block", "There is no block at " + pos[0] + " " + pos[1] + " " + pos[2]);
             }
             aim.checkReach(player, pos[0] + 0.5, pos[1] + 0.5, pos[2] + 0.5);
@@ -129,7 +129,7 @@ final class Actions implements Ops.Module {
         @Override
         void tick(Object mc, Object player) throws Exception {
             Object state = world.blockState(mc, pos);
-            if (state != null && Boolean.TRUE.equals(game.optCall(state, "isAir"))) {
+            if (state != null && game.isAir(state)) {
                 Map<String, Object> out = progress(player);
                 out.put("broken", true);
                 finish(out);

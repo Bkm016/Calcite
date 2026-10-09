@@ -162,6 +162,6 @@ final class Menus {
         if (m == null) {
             throw new ProbeException("unsupported", "No container click API in this version");
         }
-        m.invoke(gameMode, game.optGet(menu(player), "containerId"), slot, button, type, player);
+        m.invoke(gameMode, game.containerId(menu(player)), slot, button, type, player);
     }
 }

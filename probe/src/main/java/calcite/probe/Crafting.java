@@ -162,7 +162,7 @@ final class Crafting implements Ops.Module {
             if (m == null) {
                 throw new ProbeException("unsupported", "Recipe placement is not available in this version");
             }
-            m.invoke(gameMode, game.optGet(menus.menu(player), "containerId"), candidates.get(candidate).handle, false);
+            m.invoke(gameMode, game.containerId(menus.menu(player)), candidates.get(candidate).handle, false);
         }
 
         private void finishWith(Object player, String reason) {

@@ -146,7 +146,7 @@ final class Watcher {
         if (now != null) {
             Object screen = game.screen(mc);
             emit("container.open", map("type", menus.menuType(now), "title", screen == null ? null : game.text(game.optCall(screen, "getTitle")),
-                    "containerId", game.optGet(now, "containerId"), "size", menus.slots(now).size()));
+                    "containerId", game.containerId(now), "size", menus.slots(now).size()));
         }
     }
 
