@@ -10,8 +10,6 @@ interface ReplCommand {
   run(client: Client, args: string[], rest: string): unknown;
 }
 
-const out = (line = '') => process.stdout.write(`${line}\n`);
-
 const usage = (name: string) => new CalciteError('bad_request', `usage: :${name} ${lookup(name)?.args ?? ''}`);
 
 /** Argument {@code index} as a number; fails with the command's usage when it is missing or not a number. */
@@ -28,15 +26,15 @@ function point(args: string[], name: string, from = 0): { x: number; y: number; 
 
 const optionalNumber = (value: string | undefined) => (value === undefined ? undefined : Number(value));
 
-function printSurroundings(s: Surroundings): void {
-  out(
+export function formatSurroundings(s: Surroundings): string {
+  return [
     `${s.x.toFixed(1)} ${s.y.toFixed(1)} ${s.z.toFixed(1)} facing ${s.facing} in ${s.biome ?? '?'} (${s.dimension ?? '?'}), time ${s.timeOfDay ?? '?'}`,
-  );
-  out(`standing on ${s.standingOn ?? '?'}${s.in ? `, in ${s.in}` : ''}`);
-  for (const row of s.map) out(`  ${row}`);
-  out(`  ${s.legend}`);
-  for (const b of s.blocks) out(`${String(b.count).padStart(5)}  ${b.id}  nearest ${b.nearest.join(' ')}`);
-  for (const e of s.entities) out(`entity ${e.id} ${e.type}${e.name ? ` "${e.name}"` : ''} at ${e.distance}m`);
+    `standing on ${s.standingOn ?? '?'}${s.in ? `, in ${s.in}` : ''}`,
+    ...s.map.map((row) => `  ${row}`),
+    `  ${s.legend}`,
+    ...s.blocks.map((b) => `${String(b.count).padStart(5)}  ${b.id}  nearest ${b.nearest.join(' ')}`),
+    ...s.entities.map((e) => `entity ${e.id} ${e.type}${e.name ? ` "${e.name}"` : ''} at ${e.distance}m`),
+  ].join('\n');
 }
 
 const COMMANDS: Record<string, ReplCommand> = {
@@ -44,18 +42,18 @@ const COMMANDS: Record<string, ReplCommand> = {
   ents: {
     args: '[radius]',
     help: 'entities nearby',
-    run: async (c, [radius]) => {
-      for (const e of await c.entities({ radius: optionalNumber(radius) ?? 32 })) {
-        out(
-          `${e.id}\t${e.type}\t${e.name ?? ''}${e.customName ? ` (${e.customName})` : ''}\t${e.x?.toFixed(1)} ${e.y?.toFixed(1)} ${e.z?.toFixed(1)}`,
-        );
-      }
-    },
+    run: async (c, [radius]) =>
+      (await c.entities({ radius: optionalNumber(radius) ?? 32 }))
+        .map(
+          (e) =>
+            `${e.id}\t${e.type}\t${e.name ?? ''}${e.customName ? ` (${e.customName})` : ''}\t${e.x?.toFixed(1)} ${e.y?.toFixed(1)} ${e.z?.toFixed(1)}`,
+        )
+        .join('\n'),
   },
   around: {
     args: '[radius]',
     help: 'map of the area, nearby blocks and entities',
-    run: async (c, [radius]) => printSurroundings(await c.surroundings({ radius: optionalNumber(radius) })),
+    run: async (c, [radius]) => formatSurroundings(await c.surroundings({ radius: optionalNumber(radius) })),
   },
   find: {
     args: '<block> [radius]',
@@ -159,9 +157,11 @@ const COMMANDS: Record<string, ReplCommand> = {
     help: 'extension commands',
     run: async (c) => {
       const { commands, extensions } = await c.extensions();
-      for (const x of extensions) out(`jar ${x.jar}: ${x.error ? `failed: ${x.error}` : x.ids.join(', ')}`);
-      for (const cmd of commands) out(`${cmd.name}\t${cmd.description ?? ''}${cmd.schema ? `\targs ${JSON.stringify(cmd.schema)}` : ''}`);
-      if (!commands.length) out('no extension commands');
+      return [
+        ...extensions.map((x) => `jar ${x.jar}: ${x.error ? `failed: ${x.error}` : x.ids.join(', ')}`),
+        ...commands.map((cmd) => `${cmd.name}\t${cmd.description ?? ''}${cmd.schema ? `\targs ${JSON.stringify(cmd.schema)}` : ''}`),
+        ...(commands.length ? [] : ['no extension commands']),
+      ].join('\n');
     },
   },
   call: {
@@ -187,15 +187,22 @@ function help(): string {
   return ['Type chat, /command or:', ...lines.map(([u, h]) => `  ${u.padEnd(width)}  ${h}`)].join('\n');
 }
 
-async function execute(client: Client, line: string): Promise<void> {
-  if (line.startsWith('/')) return client.command(line.slice(1));
-  if (!line.startsWith(':')) return client.chat(line);
+/** Runs one console line: chat, a /command, or a :command. Returns the text to print, if any. */
+export async function execute(client: Client, line: string): Promise<string | undefined> {
+  if (line.startsWith('/')) {
+    await client.command(line.slice(1));
+    return undefined;
+  }
+  if (!line.startsWith(':')) {
+    await client.chat(line);
+    return undefined;
+  }
   const [name = '', ...args] = line.slice(1).split(/\s+/);
   const command = lookup(name);
   if (!command) throw new CalciteError('unknown_command', `unknown command :${name} (:help lists them)`);
   const result = await command.run(client, args, line.slice(1 + name.length).trim());
-  if (typeof result === 'string') out(result);
-  else if (result !== undefined) out(JSON.stringify(result, null, 2));
+  if (result === undefined || typeof result === 'string') return result;
+  return JSON.stringify(result, null, 2);
 }
 
 /** Reads console lines until ":quit" or end of input, running each against the client. */
@@ -207,7 +214,8 @@ export async function runRepl(client: Client): Promise<void> {
     if (line === ':quit' || line === ':q') break;
     if (!line) continue;
     try {
-      await execute(client, line);
+      const output = await execute(client, line);
+      if (output) process.stdout.write(`${output}\n`);
     } catch (err) {
       process.stderr.write(`error: ${(err as Error).message}\n`);
     }
