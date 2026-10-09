@@ -5,6 +5,7 @@ import { copyFile, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import { basename, join, resolve } from 'node:path';
 import { createInterface } from 'node:readline';
+import { UTF8_CONSOLE_PROPS } from './hmc.js';
 import { ensureJava } from './java.js';
 import { getVersionJson, requiredJavaMajor, resolveVersion } from './mojang.js';
 import { download, httpJson } from './net.js';
@@ -27,6 +28,26 @@ const VIA_PLUGINS = [
 /** Plugins placed by an earlier start, removed again when they are no longer wanted. */
 const MANAGED_PLUGINS = 'plugins/.calcite-managed.json';
 
+/** The Minecraft version of the previous start; configs and worlds from another version are not reused. */
+const VERSION_FILE = '.calcite-version';
+
+/**
+ * Configs and worlds an older server cannot read. Downloaded jars (cache, libraries, versions) are stored per
+ * version and kept; plugins download their own libraries there too.
+ */
+const VERSIONED_STATE = [
+  'config',
+  'bukkit.yml',
+  'spigot.yml',
+  'commands.yml',
+  'help.yml',
+  'permissions.yml',
+  'version_history.json',
+  'world',
+  'world_nether',
+  'world_the_end',
+];
+
 export interface PaperServerOptions {
   /** Server directory; jars are cached there. */
   dir: string;
@@ -40,7 +61,7 @@ export interface PaperServerOptions {
   plugins?: string[];
   /** Install ViaVersion and ViaBackwards so other client versions can join (default true; needs Java 17+). */
   via?: boolean;
-  /** Keep the world of the previous start instead of generating a new one (default false). */
+  /** Keep the world of the previous start instead of generating a new one (default false; never across versions). */
   keepWorld?: boolean;
   /** server.properties entries on top of the test defaults (offline, flat, peaceful, no spawn protection). */
   properties?: Record<string, string>;
@@ -144,7 +165,13 @@ export async function startPaperServer(opts: PaperServerOptions): Promise<PaperS
   const java = await ensureJava(paths, requiredJavaMajor(json), { javaPath: opts.javaPath });
 
   await mkdir(dir, { recursive: true });
+  // A directory without the marker may hold state from any version, so it is reset too.
+  const previousVersion = await readFile(join(dir, VERSION_FILE), 'utf8').catch(() => null);
+  if (previousVersion !== json.id) {
+    for (const entry of VERSIONED_STATE) await rm(join(dir, entry), { recursive: true, force: true });
+  }
   await installPaper(dir, json.id);
+  await writeFile(join(dir, VERSION_FILE), json.id);
   await installPlugins(dir, opts.plugins ?? [], (opts.via ?? true) && java.major >= 17);
   if (!opts.keepWorld) {
     for (const world of ['world', 'world_nether', 'world_the_end']) await rm(join(dir, world), { recursive: true, force: true });
@@ -154,7 +181,8 @@ export async function startPaperServer(opts: PaperServerOptions): Promise<PaperS
   const ops = (opts.operators ?? []).map((name) => ({ uuid: offlineUuid(name), name, level: 4, bypassesPlayerLimit: false }));
   await writeFile(join(dir, 'ops.json'), JSON.stringify(ops, null, 2));
 
-  const proc = spawn(java.path, [`-Xmx${opts.memory ?? '1G'}`, '-jar', 'paper.jar', '--nogui'], {
+  const utf8 = Object.entries(UTF8_CONSOLE_PROPS).map(([k, v]) => `-D${k}=${v}`);
+  const proc = spawn(java.path, [`-Xmx${opts.memory ?? '1G'}`, ...utf8, '-jar', 'paper.jar', '--nogui'], {
     cwd: dir,
     stdio: ['pipe', 'pipe', 'pipe'],
   });
