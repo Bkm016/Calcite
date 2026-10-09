@@ -9,6 +9,8 @@ import calcite.probe.api.CalciteException;
 /** A failure reported to the controller as {@code {"ok":false,"code":...,"error":...}}. */
 public final class ProbeException extends CalciteException {
 
+    private static final long serialVersionUID = 1L;
+
     public ProbeException(String code, String message) {
         super(code, message);
     }

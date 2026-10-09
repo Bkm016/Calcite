@@ -10,6 +10,9 @@ const src = join(root, 'probe', 'src', 'main', 'java');
 const out = join(root, 'probe', 'build', 'classes');
 const jarFile = join(root, 'vendor', 'calcite-probe.jar');
 
+/** javac options shared by the probe and its tests: Java 8 bytecode, every lint as an error. */
+export const JAVAC_OPTIONS = ['--release', '8', '-encoding', 'UTF-8', '-Xlint:all,-options', '-Werror'];
+
 export function jdkTool(name) {
   const exe = process.platform === 'win32' ? `${name}.exe` : name;
   if (process.env.JAVA_HOME) {
@@ -33,7 +36,7 @@ function main() {
   rmSync(out, { recursive: true, force: true });
   mkdirSync(out, { recursive: true });
   mkdirSync(dirname(jarFile), { recursive: true });
-  execFileSync(jdkTool('javac'), ['--release', '8', '-Xlint:-options', '-encoding', 'UTF-8', '-d', out, ...listJava(src)], {
+  execFileSync(jdkTool('javac'), [...JAVAC_OPTIONS, '-d', out, ...listJava(src)], {
     stdio: 'inherit',
   });
   const manifest = join(root, 'probe', 'build', 'MANIFEST.MF');
