@@ -1,5 +1,5 @@
 import { Socket } from 'node:net';
-import { hmcJavaHome, hmcListEntry, hmcQuote, hmcVersionArgs } from './hmc.js';
+import { hmcJavaHome, hmcListEntry, hmcQuote, hmcVersionArgs, UTF8_CONSOLE_PROPS } from './hmc.js';
 import { javaProxyProps } from './net.js';
 import { CalciteError, type ClientOptions, type RenderMode, type ServerAddress } from './types.js';
 
@@ -63,14 +63,14 @@ export interface JvmSettings {
   extra?: string[];
 }
 
-/** JVM arguments for the game: the probe agent, heap size, proxy settings and the caller's own arguments. */
+/** JVM arguments for the game: the probe agent, heap size, UTF-8 console, proxy settings and the caller's own arguments. */
 export function gameJvmArgs(s: JvmSettings): string[] {
   return [
     // HeadlessMC's stubbed LWJGL buffers have no native address; JOML's Unsafe path writes to it and crashes the JVM
     ...(s.headless ? ['-Djoml.nounsafe=true'] : []),
     ...(s.agent ? [`-javaagent:${s.agent}`] : []),
     `-Xmx${s.memory ?? '2G'}`,
-    ...Object.entries(javaProxyProps()).map(([k, v]) => `-D${k}=${v}`),
+    ...Object.entries({ ...UTF8_CONSOLE_PROPS, ...javaProxyProps() }).map(([k, v]) => `-D${k}=${v}`),
     ...(s.extra ?? []),
   ];
 }

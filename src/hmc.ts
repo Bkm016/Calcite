@@ -134,6 +134,18 @@ function guardExit(): void {
 }
 
 /**
+ * Makes a JVM write its console output as UTF-8 whatever the system locale says. Chat and logs are read from that
+ * output; before Java 18 the default follows the locale, which turns non-ASCII text into "?" under POSIX/C.
+ */
+export const UTF8_CONSOLE_PROPS: Readonly<Record<string, string>> = {
+  'file.encoding': 'UTF-8',
+  'stdout.encoding': 'UTF-8', // Java 19+
+  'stderr.encoding': 'UTF-8',
+  'sun.stdout.encoding': 'UTF-8', // older JDKs
+  'sun.stderr.encoding': 'UTF-8',
+};
+
+/**
  * Runs one HeadlessMC command non-interactively; HeadlessMC exits once the command (and a launched game) finished.
  * Settings are passed as -D system properties, which take precedence over any config file.
  */
@@ -142,6 +154,7 @@ export function runHmc(opts: HmcRunOptions): HmcRun {
     'hmc.files.location': opts.location,
     'hmc.jline.enabled': 'false',
     'hmc.log.console-level': 'INFO',
+    ...UTF8_CONSOLE_PROPS,
     ...javaProxyProps(),
     ...opts.props,
   };

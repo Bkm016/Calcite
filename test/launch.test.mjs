@@ -103,11 +103,19 @@ test('gameJvmArgs', () => {
   const saved = { ...process.env };
   try {
     for (const k of ['HTTPS_PROXY', 'https_proxy', 'HTTP_PROXY', 'http_proxy']) delete process.env[k];
-    assert.deepEqual(gameJvmArgs({ headless: false }), ['-Xmx2G']);
+    const utf8 = [
+      '-Dfile.encoding=UTF-8',
+      '-Dstdout.encoding=UTF-8',
+      '-Dstderr.encoding=UTF-8',
+      '-Dsun.stdout.encoding=UTF-8',
+      '-Dsun.stderr.encoding=UTF-8',
+    ];
+    assert.deepEqual(gameJvmArgs({ headless: false }), ['-Xmx2G', ...utf8]);
     assert.deepEqual(gameJvmArgs({ headless: true, agent: 'probe.jar=a.properties', memory: '4G', extra: ['-Dx=1'] }), [
       '-Djoml.nounsafe=true',
       '-javaagent:probe.jar=a.properties',
       '-Xmx4G',
+      ...utf8,
       '-Dx=1',
     ]);
   } finally {
