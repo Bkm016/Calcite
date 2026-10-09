@@ -1,5 +1,5 @@
 // End-to-end check of the basic player actions against a real server (1.17+ server; the bot must be an operator).
-// Usage: node scripts/actions-smoke.mjs <version> <host:port> [name]; see scripts/e2e.mjs for the environment.
+// Usage: node scripts/actions-smoke.mjs <version> [host:port | paper] [name]; see scripts/e2e.mjs for the environment.
 import { runE2E, sleep, until } from './e2e.mjs';
 
 const slotOf = (inv, id) => inv.items.find((i) => i.id === id && i.slot < 9)?.slot;

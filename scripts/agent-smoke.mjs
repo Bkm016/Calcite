@@ -1,5 +1,5 @@
 // End-to-end check of the agent-level features: events, surroundings, block search, path finding, long actions
-// (progress, cancel, stop on damage), crafting and furnaces. Usage: node scripts/agent-smoke.mjs <version> <host:port> [name]
+// (progress, cancel, stop on damage), crafting and furnaces. Usage: node scripts/agent-smoke.mjs <version> [host:port | paper] [name]
 import { runE2E, sleep, until } from './e2e.mjs';
 
 const count = (inv, id) => inv.items.filter((i) => i.id === `minecraft:${id}`).reduce((n, i) => n + i.count, 0);

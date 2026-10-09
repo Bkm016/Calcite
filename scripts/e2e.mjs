@@ -1,7 +1,10 @@
 // Shared harness of the end-to-end scripts: starts one bot against a real server, runs a scenario and reports.
-// Arguments: <version> <host:port> [name]. The bot must be an operator on a server with spawn protection off.
+// Arguments: <version> [host:port | paper] [name]. "paper" (the default) runs a managed Paper server from
+// scripts/test-server.mjs (cached in CALCITE_E2E_DIR, default .e2e/paper); an external server must make the bot an
+// operator and turn spawn protection off.
 // CALCITE_RENDER=off|on-demand|always, CALCITE_LOADER=fabric|forge|neoforge[@version], CALCITE_MODS=spec,spec
 import { Client } from '../dist/index.js';
+import { startTestServer } from './test-server.mjs';
 
 export const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -20,11 +23,13 @@ export async function until(fn, timeoutMs = 5000) {
  * {@code t}: client, check(label, ok, detail), cmd(command), base {x, y, z} (a stone platform is built there).
  */
 export async function runE2E(title, scenario, { platformRadius = 8 } = {}) {
-  const [version = '1.21.11', server = 'localhost:25565', name = 'ActBot'] = process.argv.slice(2);
+  const [version = '1.21.11', target = 'paper', name = 'ActBot'] = process.argv.slice(2);
+  const managed =
+    target === 'paper' ? await startTestServer({ dir: process.env.CALCITE_E2E_DIR ?? '.e2e/paper', operators: [name] }) : undefined;
   const client = new Client({
     name,
     version,
-    server,
+    server: managed?.address ?? target,
     render: process.env.CALCITE_RENDER ?? 'off',
     account: { type: 'offline', username: name.slice(0, 16) },
     loader: process.env.CALCITE_LOADER,
@@ -74,5 +79,6 @@ export async function runE2E(title, scenario, { platformRadius = 8 } = {}) {
     process.exitCode = 1;
   } finally {
     await client.stop();
+    await managed?.stop();
   }
 }

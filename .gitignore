@@ -6,3 +6,4 @@ probe/build/
 .calcite/
 examples/*/build/
 examples/*/*.jar
+.e2e/

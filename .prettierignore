@@ -4,3 +4,4 @@ probe
 node_modules
 package-lock.json
 *.md
+.e2e
