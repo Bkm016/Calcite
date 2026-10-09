@@ -5,18 +5,27 @@ import { join } from 'node:path';
 import { prepareAccount, syncAccount } from './accounts.js';
 import { acquireDisplay, which, type DisplayLease } from './display.js';
 import { Feed } from './feed.js';
-import { hmcJavaHome, hmcListEntry, killTree, runHmc, writeHmcProfile, type HmcRun, type HmcRunOptions } from './hmc.js';
+import { killTree, runHmc, writeHmcProfile, type HmcRun, type HmcRunOptions } from './hmc.js';
 import { assetsVerified, installProbe, markAssetsVerified, prepareGame, type PreparedGame } from './install.js';
-import { BackendWatch, hmcLaunchCommand, joinArgs, probeConfig, tcpReachable } from './launch.js';
+import {
+  BackendWatch,
+  gameJvmArgs,
+  hmcLaunchCommand,
+  hmcProperties,
+  joinArgs,
+  noBackendHint,
+  probeConfig,
+  tcpReachable,
+} from './launch.js';
 import { parseLoader } from './loaders.js';
 import { acquireLock } from './lock.js';
 import { logger } from './log.js';
 import { resolveExtensions, resolveMods, syncMods, type ModFile } from './mods.js';
-import { javaProxyProps } from './net.js';
 import { supportsQuickPlay } from './mojang.js';
 import { defaultOptions, writeOptions } from './options.js';
 import { resolvePaths, type CalcitePaths } from './paths.js';
 import { ProbeServer } from './probe-server.js';
+import { MOD_ERROR_LINE, gameStage } from './stage.js';
 import {
   CalciteError,
   defaultUsername,
@@ -38,9 +47,6 @@ const NAME_RE = /^[A-Za-z0-9_.-]{1,64}$/;
 const MAX_LOG = 5000;
 const MAX_CHAT = 1000;
 const MAX_EVENTS = 1000;
-
-/** Screens shown while joining or changing dimension; the player is not playable yet. */
-const LOADING_SCREEN = /LevelLoading|ReceivingLevel|ProgressScreen|ConnectScreen|GenericMessage|DownloadingTerrain/;
 
 export const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -248,14 +254,12 @@ export abstract class ClientCore extends EventEmitter<ClientEvents> {
       virtualDisplay = this.display.virtual;
     }
 
-    const jvmArgs = [
-      `-Xmx${this.options.memory ?? '2G'}`,
-      ...Object.entries(javaProxyProps()).map(([k, v]) => `-D${k}=${v}`),
-      ...(this.options.jvmArgs ?? []),
-    ];
-    if (names.kind !== 'unsupported') jvmArgs.unshift(`-javaagent:${probeJar}=${this.probeConfig}`);
-    // HeadlessMC's stubbed LWJGL buffers have no native address; JOML's Unsafe path writes to it and crashes the JVM
-    if (this.headlessValue) jvmArgs.unshift('-Djoml.nounsafe=true');
+    const jvmArgs = gameJvmArgs({
+      agent: names.kind === 'unsupported' ? undefined : `${probeJar}=${this.probeConfig}`,
+      headless: this.headlessValue,
+      memory: this.options.memory,
+      extra: this.options.jvmArgs,
+    });
     const gameArgs = [...(this.server ? joinArgs(this.server, supportsQuickPlay(json)) : []), ...(this.options.gameArgs ?? [])];
     const offline = this.account.type === 'offline';
     // a private HeadlessMC location per client: its own account selection, config and caches
@@ -268,17 +272,13 @@ export abstract class ClientCore extends EventEmitter<ClientEvents> {
       throw code ? new CalciteError(code, (err as Error).message) : err;
     }
     await writeHmcProfile(location, json.id, this.gameDir, java.major, loader);
-    const props: Record<string, string> = {
-      'hmc.files.mc': this.paths.minecraft,
-      'hmc.files.game': this.gameDir,
-      'hmc.java.versions': hmcListEntry(hmcJavaHome(java.path)),
-      'hmc.java.download': 'false',
-      // HeadlessMC only lets offline accounts render when it sees Xvfb running
-      'hmc.xvfb.check': String(virtualDisplay),
-      // "dummy" assets skip the hashing of existing asset files; a missing one would become a placeholder, so this is
-      // only set once a launch got through the full download and verification
-      'hmc.assets.dummy': String(await assetsVerified(this.paths, json)),
-    };
+    const props = hmcProperties({
+      minecraftDir: this.paths.minecraft,
+      gameDir: this.gameDir,
+      javaPath: java.path,
+      virtualDisplay,
+      assetsVerified: await assetsVerified(this.paths, json),
+    });
     // the session HeadlessMC refreshed before launching goes back to the shared store
     const syncSession = () => {
       if (offline) return;
@@ -331,12 +331,8 @@ export abstract class ClientCore extends EventEmitter<ClientEvents> {
     let launched = false;
     const backend = new BackendWatch((errors) => {
       if (run !== this.run || this.stopping) return;
-      const hint =
-        process.platform === 'linux'
-          ? ' On Linux without a GPU install Mesa EGL (apt install libegl1 libegl-mesa0) or Vulkan (apt install mesa-vulkan-drivers), or use render "off".'
-          : ' Update the graphics drivers, or use render "off".';
       this.fatalCode = 'renderer_unavailable';
-      this.lastError = `No graphics backend could be created: ${errors.join('; ')}.${hint}`;
+      this.lastError = `No graphics backend could be created: ${errors.join('; ')}. ${noBackendHint(process.platform)}`;
       this.note(this.lastError);
       this.setPhase('crashed');
       void killTree(run.child);
@@ -379,36 +375,51 @@ export abstract class ClientCore extends EventEmitter<ClientEvents> {
     const prev = this.lastState;
     this.lastState = state;
     if (JSON.stringify(prev) !== JSON.stringify(state)) this.emit('state', state);
-    if (state.screen && /LoadingErrorScreen|ModLoadingError/.test(state.screen) && !this.fatalCode && this.run) {
-      // Forge/NeoForge stay on an error screen when mods fail to load; relaunching would not help
-      const errors = this.logs.since(0, (l) => l.source === 'game' && /\/(ERROR|FATAL)\]|Exception|[Mm]issing|requires/.test(l.line), 12);
-      this.fatalCode = 'mod_loading_failed';
-      this.lastError = `Mod loading failed (${state.screen}); check the mods and the loader version:\n${errors.map((l) => l.line).join('\n')}`;
-      this.note(this.lastError);
-      this.setPhase('crashed');
-      void killTree(this.run.child);
-      return;
+    switch (gameStage(state)) {
+      case 'mod_error':
+        if (this.run && !this.fatalCode) this.failModLoading(this.run, state.screen ?? '?');
+        break;
+      case 'playing':
+        if (this.phaseValue !== 'in_game') {
+          this.inGameSince = Date.now();
+          this.everInGame = true;
+          this.setPhase('in_game');
+        } else if (this.reconnects > 0 && Date.now() - this.inGameSince > 60_000) {
+          this.reconnects = 0; // stable again
+        }
+        break;
+      case 'title':
+        // Pre-1.20 versions may ignore --server (e.g. 1.16.4+ when multiplayer privileges cannot be checked)
+        if (this.server && !this.joinRequested && this.phaseValue === 'connecting') this.joinFromTitle(this.probe, this.server);
+        break;
+      case 'disconnected':
+        if (this.phaseValue !== 'disconnected' && this.phaseValue !== 'reconnecting') {
+          this.lastError = `Disconnected: ${state.disconnectReason ?? 'unknown reason'}`;
+          this.setPhase('disconnected');
+          void this.maybeReconnect();
+        }
+        break;
+      case 'loading':
+        break;
     }
-    if (state.inGame && !state.loading && !LOADING_SCREEN.test(state.screen ?? '')) {
-      if (this.phaseValue !== 'in_game') {
-        this.inGameSince = Date.now();
-        this.everInGame = true;
-        this.setPhase('in_game');
-      } else if (this.reconnects > 0 && Date.now() - this.inGameSince > 60_000) {
-        this.reconnects = 0; // stable again
-      }
-    } else if (this.server && !this.joinRequested && this.phaseValue === 'connecting' && state.screen === 'TitleScreen' && !state.loading) {
-      // Pre-1.20 versions may ignore --server (e.g. 1.16.4+ when multiplayer privileges cannot be checked)
-      this.joinRequested = true;
-      this.note(`joining ${this.server.host}:${this.server.port} from the title screen`);
-      this.probe.request('connect', { host: this.server.host, port: this.server.port }).catch((err: unknown) => {
-        this.note(`join failed: ${(err as Error).message}`);
-      });
-    } else if (state.screen === 'DisconnectedScreen' && this.phaseValue !== 'disconnected' && this.phaseValue !== 'reconnecting') {
-      this.lastError = `Disconnected: ${state.disconnectReason ?? 'unknown reason'}`;
-      this.setPhase('disconnected');
-      void this.maybeReconnect();
-    }
+  }
+
+  /** Forge/NeoForge stay on an error screen when mods fail to load; relaunching would not help. */
+  private failModLoading(run: HmcRun, screen: string): void {
+    const errors = this.logs.since(0, (l) => l.source === 'game' && MOD_ERROR_LINE.test(l.line), 12);
+    this.fatalCode = 'mod_loading_failed';
+    this.lastError = `Mod loading failed (${screen}); check the mods and the loader version:\n${errors.map((l) => l.line).join('\n')}`;
+    this.note(this.lastError);
+    this.setPhase('crashed');
+    void killTree(run.child);
+  }
+
+  private joinFromTitle(probe: ProbeServer, server: ServerAddress): void {
+    this.joinRequested = true;
+    this.note(`joining ${server.host}:${server.port} from the title screen`);
+    probe.request('connect', { host: server.host, port: server.port }).catch((err: unknown) => {
+      this.note(`join failed: ${(err as Error).message}`);
+    });
   }
 
   private reconnectLimit(): number {

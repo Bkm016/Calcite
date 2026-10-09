@@ -1,7 +1,16 @@
 import assert from 'node:assert/strict';
 import { createServer } from 'node:net';
 import { test } from 'node:test';
-import { BackendWatch, hmcLaunchCommand, joinArgs, probeConfig, propValue, tcpReachable } from '../dist/launch.js';
+import {
+  BackendWatch,
+  gameJvmArgs,
+  hmcLaunchCommand,
+  hmcProperties,
+  joinArgs,
+  probeConfig,
+  propValue,
+  tcpReachable,
+} from '../dist/launch.js';
 
 test('propValue escapes properties syntax', () => {
   assert.equal(propValue('C:\\games\\a=b:c'), 'C\\:\\\\games\\\\a\\=b\\:c');
@@ -85,4 +94,34 @@ test('tcpReachable', async () => {
   assert.equal(await tcpReachable('127.0.0.1', port), true);
   await new Promise((resolve) => server.close(resolve));
   assert.equal(await tcpReachable('127.0.0.1', port, 500), false);
+});
+
+test('gameJvmArgs', () => {
+  const saved = { ...process.env };
+  try {
+    for (const k of ['HTTPS_PROXY', 'https_proxy', 'HTTP_PROXY', 'http_proxy']) delete process.env[k];
+    assert.deepEqual(gameJvmArgs({ headless: false }), ['-Xmx2G']);
+    assert.deepEqual(gameJvmArgs({ headless: true, agent: 'probe.jar=a.properties', memory: '4G', extra: ['-Dx=1'] }), [
+      '-Djoml.nounsafe=true',
+      '-javaagent:probe.jar=a.properties',
+      '-Xmx4G',
+      '-Dx=1',
+    ]);
+  } finally {
+    process.env = saved;
+  }
+});
+
+test('hmcProperties', () => {
+  const props = hmcProperties({
+    minecraftDir: '/mc',
+    gameDir: '/g',
+    javaPath: '/jdk/bin/java',
+    virtualDisplay: true,
+    assetsVerified: false,
+  });
+  assert.equal(props['hmc.files.game'], '/g');
+  assert.equal(props['hmc.xvfb.check'], 'true');
+  assert.equal(props['hmc.assets.dummy'], 'false');
+  assert.equal(props['hmc.java.download'], 'false');
 });

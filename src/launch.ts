@@ -1,5 +1,6 @@
 import { Socket } from 'node:net';
-import { hmcQuote, hmcVersionArgs } from './hmc.js';
+import { hmcJavaHome, hmcListEntry, hmcQuote, hmcVersionArgs } from './hmc.js';
+import { javaProxyProps } from './net.js';
 import type { RenderMode, ServerAddress } from './types.js';
 
 /** Escapes a value for a java.util.Properties file. */
@@ -54,6 +55,49 @@ export function hmcLaunchCommand(l: GameLaunch): string[] {
   ];
 }
 
+export interface JvmSettings {
+  /** The probe's -javaagent value ("jar=config"); absent when the version is unsupported. */
+  agent?: string;
+  headless: boolean;
+  memory?: string;
+  extra?: string[];
+}
+
+/** JVM arguments for the game: the probe agent, heap size, proxy settings and the caller's own arguments. */
+export function gameJvmArgs(s: JvmSettings): string[] {
+  return [
+    // HeadlessMC's stubbed LWJGL buffers have no native address; JOML's Unsafe path writes to it and crashes the JVM
+    ...(s.headless ? ['-Djoml.nounsafe=true'] : []),
+    ...(s.agent ? [`-javaagent:${s.agent}`] : []),
+    `-Xmx${s.memory ?? '2G'}`,
+    ...Object.entries(javaProxyProps()).map(([k, v]) => `-D${k}=${v}`),
+    ...(s.extra ?? []),
+  ];
+}
+
+export interface HmcSettings {
+  minecraftDir: string;
+  gameDir: string;
+  javaPath: string;
+  virtualDisplay: boolean;
+  assetsVerified: boolean;
+}
+
+/** HeadlessMC system properties for one client. */
+export function hmcProperties(s: HmcSettings): Record<string, string> {
+  return {
+    'hmc.files.mc': s.minecraftDir,
+    'hmc.files.game': s.gameDir,
+    'hmc.java.versions': hmcListEntry(hmcJavaHome(s.javaPath)),
+    'hmc.java.download': 'false',
+    // HeadlessMC only lets offline accounts render when it sees Xvfb running
+    'hmc.xvfb.check': String(s.virtualDisplay),
+    // "dummy" assets skip the hashing of existing asset files; a missing one would become a placeholder, so this is
+    // only set once a launch got through the full download and verification
+    'hmc.assets.dummy': String(s.assetsVerified),
+  };
+}
+
 /** Game arguments that join {@code server} right after startup (Quick Play from 1.20, --server before). */
 export function joinArgs(server: ServerAddress, quickPlay: boolean): string[] {
   return quickPlay ? ['--quickPlayMultiplayer', `${server.host}:${server.port}`] : ['--server', server.host, '--port', String(server.port)];
@@ -70,6 +114,13 @@ export async function tcpReachable(host: string, port: number, timeoutMs = 3000)
     socket.once('error', () => done(false));
     socket.connect(port, host, () => done(true));
   });
+}
+
+/** What to do when no graphics backend could be created. */
+export function noBackendHint(platform: NodeJS.Platform): string {
+  return platform === 'linux'
+    ? 'On Linux without a GPU install Mesa EGL (apt install libegl1 libegl-mesa0) or Vulkan (apt install mesa-vulkan-drivers), or use render "off".'
+    : 'Update the graphics drivers, or use render "off".';
 }
 
 /**
