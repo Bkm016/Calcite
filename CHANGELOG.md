@@ -1,5 +1,20 @@
 # 更新日志
 
+## 0.5.0
+
+### 新增
+
+- **单人世界**：`world` 选项（命令行 `-w, --world`、`--game-mode`、`--seed`，MCP `launch_client` 的 `world` 参数），从标题界面打开存档，不存在时按指定模式与种子创建；`stop` 时先保存世界再退出。
+- **插件测试服**：`startPaperServer` 拉起一次性的 Paper 服务器，自动下载对应版本、挑选 Java、写入离线超平坦测试配置并安装插件（Java 17+ 时附带 ViaVersion/ViaBackwards）；`keepWorld` 用于验证重启后的持久化，换版本时自动重置配置与世界。另导出 `offlineUuid`。
+
+### 修复
+
+- 游戏、启动器与 Paper 的控制台统一以 UTF-8 输出。此前 Java 17 及更早版本在 POSIX/C 区域设置下会把中文等非 ASCII 聊天内容变成 `?`。
+
+### 其他
+
+- 端到端测试改用托管的 Paper 服务器与单人世界；MCP 服务器通过内存传输测试；TypeScript 引入 ESLint 与 Prettier，探针测试迁移到 JUnit 5 并开启全部编译警告。
+
 ## 0.4.0
 
 ### 新增
