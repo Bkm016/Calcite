@@ -1,12 +1,11 @@
 // Shared harness of the end-to-end scripts: starts one bot against a real server, runs a scenario and reports.
-// Arguments: <version> [host:port | paper | world] [name]. "paper" (the default) runs a managed Paper server from
-// scripts/paper-server.mjs (cached in CALCITE_E2E_DIR, default .e2e/paper); "world" plays a fresh singleplayer world;
-// an external server must make the bot an operator and turn spawn protection off.
+// Arguments: <version> [host:port | paper | world] [name]. "paper" (the default) runs a Paper 1.21.11 test server
+// (startPaperServer, cached in CALCITE_E2E_DIR, default .e2e/paper); "world" plays a fresh singleplayer world; an
+// external server must make the bot an operator and turn spawn protection off.
 // CALCITE_RENDER=off|on-demand|always, CALCITE_LOADER=fabric|forge|neoforge[@version], CALCITE_MODS=spec,spec
 import { rm } from 'node:fs/promises';
 import { join } from 'node:path';
-import { Client } from '../dist/index.js';
-import { startTestServer } from './paper-server.mjs';
+import { Client, startPaperServer } from '../dist/index.js';
 
 export const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -27,7 +26,9 @@ export async function until(fn, timeoutMs = 5000) {
 export async function runE2E(title, scenario, { platformRadius = 8 } = {}) {
   const [version = '1.21.11', target = 'paper', name = 'ActBot'] = process.argv.slice(2);
   const managed =
-    target === 'paper' ? await startTestServer({ dir: process.env.CALCITE_E2E_DIR ?? '.e2e/paper', operators: [name] }) : undefined;
+    target === 'paper'
+      ? await startPaperServer({ dir: process.env.CALCITE_E2E_DIR ?? '.e2e/paper', version: '1.21.11', operators: [name] })
+      : undefined;
   const singleplayer = target === 'world';
   const client = new Client({
     name,
@@ -61,10 +62,8 @@ export async function runE2E(title, scenario, { platformRadius = 8 } = {}) {
     const base = { x: Math.floor(p.x), y: 100, z: Math.floor(p.z) };
     console.log(`base ${base.x} ${base.y} ${base.z}`);
     const r = platformRadius;
-    if (singleplayer) {
-      // what scripts/paper-server.mjs configures for its server
-      for (const c of ['difficulty peaceful', 'time set day', 'gamerule immediate_respawn true']) await t.cmd(c);
-    }
+    // the test server is peaceful already
+    for (const c of ['difficulty peaceful', 'time set day', 'gamerule immediate_respawn true']) await t.cmd(c);
     await t.cmd('gamemode survival');
     await t.cmd('clear');
     await t.cmd(`fill ${base.x - r} ${base.y - 1} ${base.z - r} ${base.x + r} ${base.y - 1} ${base.z + r} stone`);

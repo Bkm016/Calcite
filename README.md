@@ -365,6 +365,29 @@ await bot.transfer('coal');                                 // 不指定槽位�
 | `container.open` / `container.close` | 容器类型、标题、槽位数 |
 | `screen.change` | `{ screen, previous }` 界面类名 |
 
+### 插件测试服
+
+`startPaperServer` 拉起一个一次性的 Paper 服务器，用来给插件写端到端测试：自动下载对应版本最新的 Paper 构建、按版本挑选 Java、写入离线模式与超平坦等测试默认配置，并装好 ViaVersion/ViaBackwards（Java 17+ 时）。
+
+```ts
+import { Client, startPaperServer } from '@bkm016/calcite';
+
+const server = await startPaperServer({
+  dir: '.e2e/server',
+  version: '1.21.11',
+  plugins: ['build/libs/MyPlugin.jar'],
+  operators: ['Bot'],
+});
+const bot = new Client({ name: 'Bot', version: '1.21.11', server: server.address, render: 'off' });
+await bot.start();
+await bot.command('myplugin hello');
+await server.run('myplugin status', /ready/); // 控制台指令，等待匹配的输出
+await bot.stop();
+await server.stop();
+```
+
+默认每次启动都重新生成世界；`keepWorld: true` 保留上次的世界，用于验证重启后的持久化。`properties` 覆盖 `server.properties`，`onLine` 接收全部控制台输出。
+
 此外还导出 `ClientManager`（多客户端管理）、`installVersion`、`startLogin`、`listAccounts`、`removeAccount` 等函数，类型定义随包发布。
 
 ## 平台与账号

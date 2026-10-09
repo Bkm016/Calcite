@@ -50,3 +50,5 @@ export type { JavaInstall } from './java.js';
 export { resolveVersion } from './mojang.js';
 export { setLogLevel } from './log.js';
 export { ClientManager } from './manager.js';
+export { offlineUuid, startPaperServer } from './paper.js';
+export type { PaperServer, PaperServerOptions } from './paper.js';
