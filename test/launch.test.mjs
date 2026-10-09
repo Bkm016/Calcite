@@ -3,6 +3,9 @@ import { createServer } from 'node:net';
 import { test } from 'node:test';
 import {
   BackendWatch,
+  reconnectDelay,
+  reconnectLimit,
+  waitForServer,
   gameJvmArgs,
   hmcLaunchCommand,
   hmcProperties,
@@ -124,4 +127,36 @@ test('hmcProperties', () => {
   assert.equal(props['hmc.xvfb.check'], 'true');
   assert.equal(props['hmc.assets.dummy'], 'false');
   assert.equal(props['hmc.java.download'], 'false');
+});
+
+test('waitForServer waits for the port to open', async () => {
+  const probe = createServer();
+  await new Promise((resolve) => probe.listen(0, '127.0.0.1', resolve));
+  const { port } = probe.address();
+  await new Promise((resolve) => probe.close(resolve));
+
+  const messages = [];
+  const server = createServer((s) => s.destroy());
+  setTimeout(() => server.listen(port, '127.0.0.1'), 150);
+  await waitForServer(
+    { host: '127.0.0.1', port },
+    { timeoutMs: 5000, stopped: () => false, onWaiting: (m) => messages.push(m), retryMs: 20, reportMs: 50 },
+  );
+  server.close();
+  assert.ok(messages.length > 0 && messages[0].startsWith(`still waiting for 127.0.0.1:${port}`), messages[0]);
+});
+
+test('waitForServer gives up or stops', async () => {
+  const closed = { host: '127.0.0.1', port: 1 };
+  const opts = { stopped: () => false, onWaiting: () => undefined, retryMs: 10 };
+  await assert.rejects(waitForServer(closed, { ...opts, timeoutMs: 50 }), { code: 'server_unreachable' });
+  await assert.rejects(waitForServer(closed, { ...opts, timeoutMs: 5000, stopped: () => true }), { code: 'stopped' });
+});
+
+test('reconnect policy', () => {
+  assert.equal(reconnectLimit(undefined), 10);
+  assert.equal(reconnectLimit(true), 10);
+  assert.equal(reconnectLimit(false), 0);
+  assert.equal(reconnectLimit({ maxAttempts: 3 }), 3);
+  assert.deepEqual([1, 2, 3, 4, 5, 6].map(reconnectDelay), [5000, 10000, 20000, 40000, 60000, 60000]);
 });

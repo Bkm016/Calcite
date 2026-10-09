@@ -1,7 +1,7 @@
 import { Socket } from 'node:net';
 import { hmcJavaHome, hmcListEntry, hmcQuote, hmcVersionArgs } from './hmc.js';
 import { javaProxyProps } from './net.js';
-import type { RenderMode, ServerAddress } from './types.js';
+import { CalciteError, type ClientOptions, type RenderMode, type ServerAddress } from './types.js';
 
 /** Escapes a value for a java.util.Properties file. */
 export function propValue(value: string): string {
@@ -121,6 +121,50 @@ export function noBackendHint(platform: NodeJS.Platform): string {
   return platform === 'linux'
     ? 'On Linux without a GPU install Mesa EGL (apt install libegl1 libegl-mesa0) or Vulkan (apt install mesa-vulkan-drivers), or use render "off".'
     : 'Update the graphics drivers, or use render "off".';
+}
+
+export interface ServerWait {
+  timeoutMs: number;
+  /** Ends the wait early (with a "stopped" error) when it returns true. */
+  stopped: () => boolean;
+  /** Progress, about every {@code reportMs}. */
+  onWaiting: (message: string) => void;
+  retryMs?: number;
+  reportMs?: number;
+}
+
+/** Resolves once {@code server} accepts TCP connections; fails after {@code timeoutMs}. */
+export async function waitForServer(server: ServerAddress, w: ServerWait): Promise<void> {
+  const { retryMs = 2000, reportMs = 10_000 } = w;
+  const since = Date.now();
+  let reported = since;
+  while (!(await tcpReachable(server.host, server.port))) {
+    if (w.stopped()) throw new CalciteError('stopped', 'Stopped while waiting for the server');
+    const waited = Date.now() - since;
+    if (waited > w.timeoutMs) {
+      throw new CalciteError(
+        'server_unreachable',
+        `Server ${server.host}:${server.port} is not reachable (waited ${Math.round(waited / 1000)}s)`,
+      );
+    }
+    if (Date.now() - reported >= reportMs) {
+      reported = Date.now();
+      w.onWaiting(`still waiting for ${server.host}:${server.port} (${Math.round(waited / 1000)}s of ${Math.round(w.timeoutMs / 1000)}s)`);
+    }
+    await new Promise((r) => setTimeout(r, retryMs));
+  }
+}
+
+/** How many reconnects the {@code reconnect} option allows in a row. */
+export function reconnectLimit(option: ClientOptions['reconnect']): number {
+  if (option === false) return 0;
+  if (typeof option === 'object') return option.maxAttempts ?? 10;
+  return 10;
+}
+
+/** Delay before reconnect attempt {@code attempt} (from 1): 5 s, doubling, at most a minute. */
+export function reconnectDelay(attempt: number): number {
+  return Math.min(5000 * 2 ** (attempt - 1), 60_000);
 }
 
 /**

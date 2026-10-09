@@ -294,7 +294,7 @@ export class Client extends ClientCore {
         if (hit) return { matched: 'event', event: hit };
       }
       if (cond.phase && this.phase === cond.phase) return { matched: 'phase' };
-      if (cond.entity && this.probe?.connected) {
+      if (cond.entity && this.probeConnected) {
         const { present = true, ...query } = cond.entity;
         try {
           const found = await this.entities(query);

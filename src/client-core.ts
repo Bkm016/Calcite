@@ -1,10 +1,9 @@
-import { randomBytes } from 'node:crypto';
 import { EventEmitter } from 'node:events';
-import { mkdir, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { prepareAccount, syncAccount } from './accounts.js';
-import { acquireDisplay, which, type DisplayLease } from './display.js';
+import { which } from './display.js';
 import { Feed } from './feed.js';
+import { GameRun } from './game-run.js';
 import { killTree, runHmc, writeHmcProfile, type HmcRun, type HmcRunOptions } from './hmc.js';
 import { assetsVerified, installProbe, markAssetsVerified, prepareGame, type PreparedGame } from './install.js';
 import {
@@ -14,8 +13,9 @@ import {
   hmcProperties,
   joinArgs,
   noBackendHint,
-  probeConfig,
-  tcpReachable,
+  reconnectDelay,
+  reconnectLimit,
+  waitForServer,
 } from './launch.js';
 import { parseLoader } from './loaders.js';
 import { acquireLock } from './lock.js';
@@ -24,7 +24,7 @@ import { resolveExtensions, resolveMods, syncMods, type ModFile } from './mods.j
 import { supportsQuickPlay } from './mojang.js';
 import { defaultOptions, writeOptions } from './options.js';
 import { resolvePaths, type CalcitePaths } from './paths.js';
-import { ProbeServer } from './probe-server.js';
+import type { ProbeServer } from './probe-server.js';
 import { MOD_ERROR_LINE, gameStage } from './stage.js';
 import {
   CalciteError,
@@ -65,11 +65,8 @@ export abstract class ClientCore extends EventEmitter<ClientEvents> {
   protected readonly events = new Feed<GameEvent>(MAX_EVENTS);
   private extensionJars: string[] = [];
   protected seq = 0;
-  protected probe: ProbeServer | null = null;
-  private run: HmcRun | null = null;
-  private display: DisplayLease | null = null;
+  private current: GameRun | null = null;
   private releaseInstance: (() => Promise<void>) | null = null;
-  private probeConfig: string | null = null;
   private game: PreparedGame | null = null;
   private mods: ModFile[] = [];
   protected headlessValue = false;
@@ -80,7 +77,6 @@ export abstract class ClientCore extends EventEmitter<ClientEvents> {
   private startedAt: number | undefined;
   private reconnects = 0;
   private stopping = false;
-  private poller: NodeJS.Timeout | null = null;
   private inGameSince = 0;
   private relaunching = false;
   private everInGame = false;
@@ -220,42 +216,32 @@ export abstract class ClientCore extends EventEmitter<ClientEvents> {
     const probeJar = await installProbe(this.paths);
     if (this.server) await this.waitForServer(this.server);
 
-    this.probe = new ProbeServer();
-    await this.probe.listen();
-    this.probe.on('connected', () => this.onProbeConnected());
-    this.probe.on('disconnected', () => this.note('probe disconnected'));
-    this.probe.on('event', (e) => {
+    // offline accounts may only render on a virtual display (HeadlessMC); on-demand clients stay invisible when Xvfb exists
+    const forceVirtual = this.account.type === 'offline' || (this.render === 'on-demand' && which('Xvfb') !== null);
+    const run = await GameRun.open({
+      dir: this.paths.probe,
+      name: this.options.name,
+      probe: {
+        mappings: names.kind === 'probe' ? names.candidates : [],
+        version: json.id,
+        extensions: this.extensionJars,
+        headless: this.headlessValue,
+        render: this.render,
+      },
+      display: this.headlessValue ? undefined : { forceVirtual },
+    });
+    this.current = run;
+    run.probe.on('connected', () => this.onProbeConnected(run));
+    run.probe.on('disconnected', () => this.note('probe disconnected'));
+    run.probe.on('event', (e) => {
       const event: GameEvent = { seq: ++this.seq, time: e.time, name: e.name, data: e.data };
       this.events.push(event);
       this.emit('event', event);
     });
-    this.probeConfig = join(this.paths.probe, `${this.options.name}-${randomBytes(6).toString('hex')}.properties`);
-    await mkdir(this.paths.probe, { recursive: true });
-    const settings = probeConfig({
-      port: this.probe.port,
-      token: this.probe.token,
-      mappings: names.kind === 'probe' ? names.candidates : [],
-      version: json.id,
-      extensions: this.extensionJars,
-      headless: this.headlessValue,
-      render: this.render,
-    });
-    await writeFile(this.probeConfig, settings, { mode: 0o600 });
     await writeOptions(this.gameDir, defaultOptions({ renderDistance: this.options.renderDistance, maxFps: this.options.maxFps }));
 
-    let displayEnv: Record<string, string> = {};
-    let virtualDisplay = false;
-    if (!this.headlessValue) {
-      // offline accounts may only render on a virtual display (HeadlessMC); on-demand clients stay invisible when Xvfb exists
-      this.display = await acquireDisplay({
-        forceVirtual: this.account.type === 'offline' || (this.render === 'on-demand' && which('Xvfb') !== null),
-      });
-      displayEnv = this.display.env;
-      virtualDisplay = this.display.virtual;
-    }
-
     const jvmArgs = gameJvmArgs({
-      agent: names.kind === 'unsupported' ? undefined : `${probeJar}=${this.probeConfig}`,
+      agent: names.kind === 'unsupported' ? undefined : `${probeJar}=${run.configFile}`,
       headless: this.headlessValue,
       memory: this.options.memory,
       extra: this.options.jvmArgs,
@@ -276,7 +262,7 @@ export abstract class ClientCore extends EventEmitter<ClientEvents> {
       minecraftDir: this.paths.minecraft,
       gameDir: this.gameDir,
       javaPath: java.path,
-      virtualDisplay,
+      virtualDisplay: run.display?.virtual ?? false,
       assetsVerified: await assetsVerified(this.paths, json),
     });
     // the session HeadlessMC refreshed before launching goes back to the shared store
@@ -290,13 +276,13 @@ export abstract class ClientCore extends EventEmitter<ClientEvents> {
     this.setPhase('starting');
     this.joinRequested = false;
     this.startedAt = Date.now();
-    this.spawn({
+    this.spawn(run, {
       javaPath: game.launcherJava.path,
       hmcJar: game.hmcJar,
       location,
       props,
       command: hmcLaunchCommand({ versionId: json.id, loader, offline, headless: this.headlessValue, jvmArgs, gameArgs }),
-      env: { ...process.env, ...displayEnv },
+      env: { ...process.env, ...run.display?.env },
       onLaunched: syncSession,
       onExit: syncSession,
     });
@@ -304,40 +290,28 @@ export abstract class ClientCore extends EventEmitter<ClientEvents> {
 
   private async waitForServer(server: ServerAddress): Promise<void> {
     this.setPhase('waiting_for_server');
-    const waitMs = this.options.waitForServerMs ?? 120_000;
-    const since = Date.now();
-    let reported = since;
-    while (!(await tcpReachable(server.host, server.port))) {
-      if (this.stopping) throw new CalciteError('stopped', 'Stopped while waiting for the server');
-      const waited = Date.now() - since;
-      if (waited > waitMs) {
-        throw new CalciteError(
-          'server_unreachable',
-          `Server ${server.host}:${server.port} is not reachable (waited ${Math.round(waited / 1000)}s)`,
-        );
-      }
-      if (Date.now() - reported >= 10_000) {
-        reported = Date.now();
-        const msg = `still waiting for ${server.host}:${server.port} (${Math.round(waited / 1000)}s of ${Math.round(waitMs / 1000)}s)`;
-        this.note(msg);
-        this.log.info(msg);
-      }
-      await sleep(2000);
-    }
+    await waitForServer(server, {
+      timeoutMs: this.options.waitForServerMs ?? 120_000,
+      stopped: () => this.stopping,
+      onWaiting: (message) => {
+        this.note(message);
+        this.log.info(message);
+      },
+    });
   }
 
   /** Starts HeadlessMC and follows the game's output until it exits. */
-  private spawn(opts: HmcRunOptions & { onLaunched: () => void; onExit: () => void }): void {
+  private spawn(run: GameRun, opts: HmcRunOptions & { onLaunched: () => void; onExit: () => void }): void {
     let launched = false;
     const backend = new BackendWatch((errors) => {
-      if (run !== this.run || this.stopping) return;
+      if (run !== this.current || this.stopping) return;
       this.fatalCode = 'renderer_unavailable';
       this.lastError = `No graphics backend could be created: ${errors.join('; ')}. ${noBackendHint(process.platform)}`;
       this.note(this.lastError);
       this.setPhase('crashed');
-      void killTree(run.child);
+      if (run.hmc) void killTree(run.hmc.child);
     });
-    const run = runHmc({
+    const hmc = runHmc({
       ...opts,
       onLine: (line) => {
         this.pushLog('game', line);
@@ -348,27 +322,27 @@ export abstract class ClientCore extends EventEmitter<ClientEvents> {
         }
       },
     });
-    this.run = run;
-    void run.exited.then((code) => {
+    run.hmc = hmc;
+    void hmc.exited.then((code) => {
       backend.dispose();
       opts.onExit();
       this.onGameExit(run, code);
     });
   }
 
-  private onProbeConnected(): void {
+  private onProbeConnected(run: GameRun): void {
     this.note('probe connected');
     // the game JVM only starts once HeadlessMC has downloaded and verified every asset
     if (this.game) void markAssetsVerified(this.paths, this.game.json).catch(() => undefined);
     if (this.phaseValue === 'starting' || this.phaseValue === 'reconnecting') this.setPhase('connecting');
-    this.poller ??= setInterval(() => void this.poll(), 1000);
+    run.poll(() => void this.poll(run), 1000);
   }
 
-  private async poll(): Promise<void> {
-    if (!this.probe?.connected) return;
+  private async poll(run: GameRun): Promise<void> {
+    if (run !== this.current || !run.probe.connected) return;
     let state: GameState;
     try {
-      state = await this.probe.request<GameState>('state', {}, 10_000);
+      state = await run.probe.request<GameState>('state', {}, 10_000);
     } catch {
       return; // not ready yet, or the connection is going away: the next poll tells
     }
@@ -377,7 +351,7 @@ export abstract class ClientCore extends EventEmitter<ClientEvents> {
     if (JSON.stringify(prev) !== JSON.stringify(state)) this.emit('state', state);
     switch (gameStage(state)) {
       case 'mod_error':
-        if (this.run && !this.fatalCode) this.failModLoading(this.run, state.screen ?? '?');
+        if (run.hmc && !this.fatalCode) this.failModLoading(run.hmc, state.screen ?? '?');
         break;
       case 'playing':
         if (this.phaseValue !== 'in_game') {
@@ -390,7 +364,7 @@ export abstract class ClientCore extends EventEmitter<ClientEvents> {
         break;
       case 'title':
         // Pre-1.20 versions may ignore --server (e.g. 1.16.4+ when multiplayer privileges cannot be checked)
-        if (this.server && !this.joinRequested && this.phaseValue === 'connecting') this.joinFromTitle(this.probe, this.server);
+        if (this.server && !this.joinRequested && this.phaseValue === 'connecting') this.joinFromTitle(run.probe, this.server);
         break;
       case 'disconnected':
         if (this.phaseValue !== 'disconnected' && this.phaseValue !== 'reconnecting') {
@@ -422,26 +396,19 @@ export abstract class ClientCore extends EventEmitter<ClientEvents> {
     });
   }
 
-  private reconnectLimit(): number {
-    const r = this.options.reconnect;
-    if (r === false) return 0;
-    if (typeof r === 'object') return r.maxAttempts ?? 10;
-    return 10;
-  }
-
   private async maybeReconnect(): Promise<void> {
     if (this.stopping || this.relaunching || !this.server) return;
-    if (this.reconnects >= this.reconnectLimit()) {
+    if (this.reconnects >= reconnectLimit(this.options.reconnect)) {
       this.note(`not reconnecting: ${this.reconnects} attempts used`);
       return;
     }
     this.relaunching = true;
     try {
       this.reconnects++;
-      const delay = Math.min(5000 * 2 ** (this.reconnects - 1), 60_000);
+      const delay = reconnectDelay(this.reconnects);
       this.setPhase('reconnecting');
       this.note(`reconnecting in ${delay}ms (attempt ${this.reconnects})`);
-      if (this.run) await killTree(this.run.child);
+      if (this.current?.hmc) await killTree(this.current.hmc.child);
       await sleep(delay);
       // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- stop() may run while sleeping
       if (this.stopping) return;
@@ -455,8 +422,8 @@ export abstract class ClientCore extends EventEmitter<ClientEvents> {
     }
   }
 
-  private onGameExit(run: HmcRun, code: number | null): void {
-    if (run !== this.run) return; // an older run
+  private onGameExit(run: GameRun, code: number | null): void {
+    if (run !== this.current) return; // an older run
     this.emit('exit', code);
     this.note(`game process exited with code ${code}`);
     if (this.stopping || this.relaunching || this.fatalCode) return;
@@ -477,32 +444,18 @@ export abstract class ClientCore extends EventEmitter<ClientEvents> {
       if (phase === 'in_game') return;
       if (!this.server && this.lastState?.ready && this.lastState.loading === false && phase === 'connecting') return;
       if (phase === 'crashed') throw new CalciteError(this.fatalCode ?? 'crashed', this.lastError ?? 'The game crashed during startup');
-      if (phase === 'disconnected' && this.reconnectLimit() === 0) throw new CalciteError('disconnected', this.lastError ?? 'Disconnected');
+      if (phase === 'disconnected' && reconnectLimit(this.options.reconnect) === 0)
+        throw new CalciteError('disconnected', this.lastError ?? 'Disconnected');
       if (Date.now() > deadline) throw new CalciteError('start_timeout', `Client did not start within ${timeoutMs}ms (phase ${phase})`);
       await sleep(250);
     }
   }
 
   private async cleanupRun(): Promise<void> {
-    if (this.poller) {
-      clearInterval(this.poller);
-      this.poller = null;
-    }
-    if (this.run) {
-      await killTree(this.run.child);
-      this.run = null;
-    }
-    if (this.probe) {
-      await this.probe.close();
-      this.probe = null;
-    }
-    if (this.probeConfig) {
-      await rm(this.probeConfig, { force: true });
-      this.probeConfig = null;
-    }
-    this.display?.release();
-    this.display = null;
+    const run = this.current;
+    this.current = null;
     this.lastState = undefined;
+    await run?.dispose();
   }
 
   private async shutdown(final: Phase): Promise<void> {
@@ -535,24 +488,29 @@ export abstract class ClientCore extends EventEmitter<ClientEvents> {
       account: this.account,
       server: this.server,
       gameDir: this.gameDir,
-      pid: this.run?.child.pid,
+      pid: this.current?.hmc?.child.pid,
       java: this.game?.java.version,
       startedAt: this.startedAt,
       reconnects: this.reconnects,
       lastError: this.lastError,
-      probeConnected: !!this.probe?.connected,
+      probeConnected: this.probeConnected,
       game: this.lastState,
     };
   }
 
   // ------------------------------------------------------------------ operations
 
+  protected get probeConnected(): boolean {
+    return !!this.current?.probe.connected;
+  }
+
   protected requireProbe(): ProbeServer {
     if (this.game?.names.kind === 'unsupported') {
       throw new CalciteError('unsupported_version', this.game.names.reason);
     }
-    if (!this.probe?.connected)
+    const probe = this.current?.probe;
+    if (!probe?.connected)
       throw new CalciteError('not_connected', `Client "${this.options.name}" is not running (phase ${this.phaseValue})`);
-    return this.probe;
+    return probe;
   }
 }
