@@ -1,10 +1,10 @@
 // Shared harness of the end-to-end scripts: starts one bot against a real server, runs a scenario and reports.
 // Arguments: <version> [host:port | paper] [name]. "paper" (the default) runs a managed Paper server from
-// scripts/test-server.mjs (cached in CALCITE_E2E_DIR, default .e2e/paper); an external server must make the bot an
+// scripts/paper-server.mjs (cached in CALCITE_E2E_DIR, default .e2e/paper); an external server must make the bot an
 // operator and turn spawn protection off.
 // CALCITE_RENDER=off|on-demand|always, CALCITE_LOADER=fabric|forge|neoforge[@version], CALCITE_MODS=spec,spec
 import { Client } from '../dist/index.js';
-import { startTestServer } from './test-server.mjs';
+import { startTestServer } from './paper-server.mjs';
 
 export const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 

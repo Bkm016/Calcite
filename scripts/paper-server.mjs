@@ -1,6 +1,6 @@
 // A disposable Paper server for the end-to-end scripts: offline mode, a flat peaceful world, the bots as operators
 // and ViaVersion/ViaBackwards so older clients can join. Files are cached in the given directory.
-// Standalone: node scripts/test-server.mjs [dir] [port] — runs until interrupted.
+// Standalone: node scripts/paper-server.mjs [dir] [port] — runs until interrupted.
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { once } from 'node:events';
