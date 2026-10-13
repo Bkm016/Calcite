@@ -274,12 +274,20 @@ export class Client extends ClientCore {
 
   /**
    * Waits for a condition: a chat line matching {@code chat} (regex), a game event whose name matches
-   * {@code event} (regex), an entity appearing/disappearing, or a phase. Resolves with a description of what matched.
+   * {@code event} (regex), an entity appearing/disappearing, a block as the client sees it (its {@code id}, or
+   * {@code air}; a server-side setblock reaches the client a moment later), or a phase. Resolves with a description
+   * of what matched.
    */
   async waitFor(
-    cond: { chat?: string; event?: string; entity?: EntityQuery & { present?: boolean }; phase?: Phase },
+    cond: {
+      chat?: string;
+      event?: string;
+      entity?: EntityQuery & { present?: boolean };
+      block?: BlockPosition & { id?: string; air?: boolean };
+      phase?: Phase;
+    },
     timeoutMs = 30_000,
-  ): Promise<{ matched: string; chat?: ChatLine; event?: GameEvent; entities?: EntityInfo[] }> {
+  ): Promise<{ matched: string; chat?: ChatLine; event?: GameEvent; entities?: EntityInfo[]; block?: BlockInfo }> {
     const deadline = Date.now() + timeoutMs;
     const chatRe = cond.chat ? new RegExp(cond.chat, 'i') : undefined;
     const eventRe = cond.event ? new RegExp(cond.event) : undefined;
@@ -300,6 +308,17 @@ export class Client extends ClientCore {
           const found = await this.entities(query);
           if (present ? found.length > 0 : found.length === 0)
             return { matched: present ? 'entity_present' : 'entity_absent', entities: found };
+        } catch (err) {
+          if (!(err instanceof ProbeError) || !['not_ready', 'not_in_game'].includes(err.code)) throw err;
+        }
+      }
+      if (cond.block && this.probeConnected) {
+        const { id, air, ...pos } = cond.block;
+        try {
+          const found = await this.block(pos);
+          const wantsAir = air ?? (id === undefined ? undefined : false);
+          if (found.loaded !== false && (id === undefined || found.id === id) && (wantsAir === undefined || found.air === wantsAir))
+            return { matched: 'block', block: found };
         } catch (err) {
           if (!(err instanceof ProbeError) || !['not_ready', 'not_in_game'].includes(err.code)) throw err;
         }

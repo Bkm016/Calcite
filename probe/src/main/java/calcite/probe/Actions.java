@@ -73,6 +73,12 @@ final class Actions implements Ops.Module {
             if (entityId != null) {
                 aim.targetEntity(mc, player, aim.entityInReach(mc, player, entityId));
             } else if (block != null) {
+                Object state = world.blockState(mc, block);
+                if (state == null || game.isAir(state)) {
+                    // a click on air does nothing; the block may just not have reached the client yet (waitFor {block})
+                    throw new ProbeException("no_block", "The client sees no block at " + block[0] + " " + block[1] + " " + block[2]
+                            + (state == null ? " (chunk not loaded)" : " (air); to place a block target the solid neighbour and its face"));
+                }
                 aim.targetBlock(mc, player, block, face);
             }
             Map<String, Object> target = world.describeHit(mc);

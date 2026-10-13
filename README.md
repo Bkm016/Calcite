@@ -207,7 +207,7 @@ claude mcp add calcite -- npx -y @bkm016/calcite mcp
 | `send_chat` | 发送聊天消息 |
 | `run_command` | 执行指令，并返回执行期间收到的聊天 |
 | `screenshot` | 渲染并返回 PNG 截图 |
-| `wait_for` | 等待条件成立：聊天匹配正则、实体出现或消失、进入指定阶段、收到游戏或扩展事件 |
+| `wait_for` | 等待条件成立：聊天匹配正则、实体出现或消失、方块在客户端变成指定状态、进入指定阶段、收到游戏或扩展事件 |
 | `get_chat` | 获取聊天记录 |
 | `get_logs` | 获取游戏日志与 Calcite 日志，用于排查崩溃 |
 | `set_render` | 开启或关闭持续渲染 |
@@ -300,7 +300,7 @@ await bot.stop();
 | `entities(query)` | 实体列表，`query` 支持 `radius`、`type`、`name`、`uuid`、`limit` |
 | `chat(text)` / `command(cmd)` | 发送聊天 / 执行指令 |
 | `screenshot({ keep })` | 返回 `{ png, path? }` |
-| `waitFor(cond, timeoutMs)` | 等待聊天、实体、阶段条件或扩展事件（`{ event: '正则' }`） |
+| `waitFor(cond, timeoutMs)` | 等待聊天、实体、方块（`{ block: { x, y, z, id } }`，服务端 `setblock` 之后客户端要稍后才看到）、阶段条件或扩展事件（`{ event: '正则' }`） |
 | `setRender(enabled)` / `respawn()` | 切换持续渲染 / 重生 |
 | `chatSince(seq)` / `logsSince(opts)` | 读取聊天与日志缓冲 |
 | `look({ yaw, pitch } \| { x, y, z })` | 设置视角或看向坐标 |

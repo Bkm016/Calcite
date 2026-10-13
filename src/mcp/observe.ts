@@ -137,7 +137,8 @@ export function registerObserveTools({ server, manager }: ToolContext): void {
     'wait_for',
     {
       title: 'Wait for a condition',
-      description: 'Blocks until a chat line matches, a game event arrives, an entity appears/disappears, or the client reaches a phase.',
+      description:
+        'Blocks until a chat line matches, a game event arrives, an entity appears/disappears, a block changes as the client sees it, or the client reaches a phase.',
       inputSchema: {
         client: clientName,
         chat: z.string().optional().describe('Case-insensitive regular expression matched against new chat lines'),
@@ -146,13 +147,23 @@ export function registerObserveTools({ server, manager }: ToolContext): void {
           .optional()
           .describe('Regular expression matched against the names of new game events, e.g. "player.hurt|player.death"'),
         entity: z.object({ ...entityFilter, present: z.boolean().optional().describe('false waits for it to disappear') }).optional(),
+        block: z
+          .object({
+            x: z.number().int(),
+            y: z.number().int(),
+            z: z.number().int(),
+            id: z.string().optional().describe('Block id to wait for, e.g. "minecraft:stone"'),
+            air: z.boolean().optional().describe('true waits for air, false for any block'),
+          })
+          .optional()
+          .describe('A block as the client sees it; a server-side change arrives a moment later'),
         phase: z.enum(['in_game', 'disconnected', 'reconnecting', 'crashed', 'stopped']).optional(),
         timeoutSeconds: timeoutSeconds(30),
       },
     },
     async ({ client, timeoutSeconds: seconds, ...cond }) => {
-      if (!cond.chat && !cond.event && !cond.entity && !cond.phase)
-        throw new CalciteError('bad_condition', 'Give chat, event, entity or phase');
+      if (!cond.chat && !cond.event && !cond.entity && !cond.block && !cond.phase)
+        throw new CalciteError('bad_condition', 'Give chat, event, entity, block or phase');
       return manager.resolve(client).waitFor(cond, seconds * 1000);
     },
   );
