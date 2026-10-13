@@ -1,13 +1,17 @@
 package calcite.probe;
 
 import java.lang.reflect.Method;
+import java.util.Collection;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.regex.Pattern;
 
 /**
  * Version-adaptive access to the running Minecraft client.
@@ -116,6 +120,46 @@ public final class Game {
     <T> T withPlayer(final PlayerTask<T> task) throws Exception {
         final Object mc = requireMinecraft();
         return onGameThread(() -> task.run(mc, requirePlayer(mc)), TIMEOUT_MS);
+    }
+
+    /** Every id of a registry ({@code BLOCK}, {@code ITEM}, {@code ENTITY_TYPE}), or null when the game's registry cannot be read. */
+    Set<String> registryIds(String registry) {
+        for (String holder : new String[]{"net.minecraft.core.registries.BuiltInRegistries", "net.minecraft.core.Registry"}) {
+            Class<?> k = ref.cls(holder);
+            if (k == null) {
+                continue;
+            }
+            try {
+                Object reg = ref.getStatic(k, registry);
+                Method keys = ref.method(reg.getClass(), "keySet", 0);
+                Object set = keys == null ? null : keys.invoke(reg);
+                if (set instanceof Collection) {
+                    Set<String> ids = new HashSet<String>();
+                    for (Object id : (Collection<?>) set) {
+                        ids.add(id.toString());
+                    }
+                    return ids;
+                }
+            } catch (Throwable ignored) {
+                // try the next holder
+            }
+        }
+        return null;
+    }
+
+    /** Rejects an id (or {@code *} pattern) that no entry of the registry matches, so a typo is not an empty answer. */
+    void requireRegistered(String registry, String what, String idOrPattern) {
+        Set<String> ids = registryIds(registry);
+        if (ids == null) {
+            return;
+        }
+        Pattern pattern = BlockSearch.glob(World.qualify(idOrPattern));
+        for (String id : ids) {
+            if (pattern.matcher(id).matches()) {
+                return;
+            }
+        }
+        throw new ProbeException("bad_request", "Unknown " + what + " \"" + idOrPattern + "\"");
     }
 
     /** Fails with {@code dead} while the player is dead (the death screen is up until {@code respawn}). */

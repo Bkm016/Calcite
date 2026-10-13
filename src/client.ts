@@ -56,6 +56,7 @@ export class Client extends ClientCore {
       'entities',
       {
         radius: query.radius ?? 0,
+        ...(query.type ? { type: query.type } : {}),
         limit: query.type || query.uuid || query.name ? 0 : (query.limit ?? 0),
         includeSelf: !!query.includeSelf,
       },

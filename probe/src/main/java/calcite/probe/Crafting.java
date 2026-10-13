@@ -69,6 +69,7 @@ final class Crafting implements Ops.Module {
 
         @Override
         void start(Object mc, Object player) throws Exception {
+            game.requireRegistered("ITEM", "item", item);
             candidates = recipes.find(mc, player, item);
             if (candidates.isEmpty()) {
                 throw new ProbeException("unknown_recipe", "No known crafting recipe makes " + item

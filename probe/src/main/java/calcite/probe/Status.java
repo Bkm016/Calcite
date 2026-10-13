@@ -19,7 +19,13 @@ final class Status implements Ops.Module {
     @Override
     public void register(Ops ops) {
         ops.add("state", a -> state());
-        ops.add("entities", a -> entities(a.num("radius", 0), a.integer("limit", 0), a.flag("includeSelf", false)));
+        ops.add("entities", a -> {
+            String type = a.str("type", null);
+            if (type != null) {
+                game.requireRegistered("ENTITY_TYPE", "entity type", type);
+            }
+            return entities(a.num("radius", 0), a.integer("limit", 0), a.flag("includeSelf", false));
+        });
     }
 
     Map<String, Object> state() throws Exception {

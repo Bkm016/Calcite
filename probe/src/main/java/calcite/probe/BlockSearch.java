@@ -38,6 +38,7 @@ final class BlockSearch implements Ops.Module {
         ops.add("find_blocks", a -> {
             List<Pattern> patterns = new ArrayList<Pattern>();
             for (String id : a.strings("blocks")) {
+                game.requireRegistered("BLOCK", "block", id);
                 patterns.add(glob(World.qualify(id)));
             }
             int radius = Math.max(1, Math.min(MAX_RADIUS, a.integer("radius", 32)));
