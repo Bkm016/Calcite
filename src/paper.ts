@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { once } from 'node:events';
-import { copyFile, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { copyFile, mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import { basename, join, resolve } from 'node:path';
 import { createInterface } from 'node:readline';
@@ -156,6 +156,17 @@ async function installPlugins(dir: string, plugins: string[], via: boolean): Pro
   await writeFile(join(dir, MANAGED_PLUGINS), JSON.stringify(placed));
 }
 
+/** Plugin folders that are caches, not data. */
+const PLUGIN_CACHES = new Set(['.paper-remapped']);
+
+/** Removes what plugins stored (configs, databases, saved NPCs...) so a fresh world starts from a clean slate; jars stay. */
+export async function clearPluginData(dir: string): Promise<void> {
+  const pluginDir = join(dir, 'plugins');
+  for (const entry of await readdir(pluginDir, { withFileTypes: true }).catch(() => [])) {
+    if (entry.isDirectory() && !PLUGIN_CACHES.has(entry.name)) await rm(join(pluginDir, entry.name), { recursive: true, force: true });
+  }
+}
+
 /** Starts a disposable Paper server for tests and resolves once it accepts players. */
 export async function startPaperServer(opts: PaperServerOptions): Promise<PaperServer> {
   const dir = resolve(opts.dir);
@@ -175,6 +186,7 @@ export async function startPaperServer(opts: PaperServerOptions): Promise<PaperS
   await installPlugins(dir, opts.plugins ?? [], (opts.via ?? true) && java.major >= 17);
   if (!opts.keepWorld) {
     for (const world of ['world', 'world_nether', 'world_the_end']) await rm(join(dir, world), { recursive: true, force: true });
+    await clearPluginData(dir);
   }
   await writeFile(join(dir, 'eula.txt'), 'eula=true\n');
   await writeFile(join(dir, 'server.properties'), serverProperties(port, opts.properties));
@@ -202,6 +214,10 @@ export async function startPaperServer(opts: PaperServerOptions): Promise<PaperS
     });
   }
   const exited = once(proc, 'exit');
+  // A host that dies before stop() must not leave the server running
+  const killOnExit = () => proc.kill('SIGKILL');
+  process.once('exit', killOnExit);
+  void exited.then(() => process.removeListener('exit', killOnExit));
 
   const waitForLine = (pattern: RegExp, timeoutMs = 10_000): Promise<string> =>
     new Promise((resolveLine, reject) => {
