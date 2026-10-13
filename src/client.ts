@@ -126,9 +126,19 @@ export class Client extends ClientCore {
     return this.requireProbe().request('walk_to', { x, z, ...rest, timeoutMs }, timeoutMs + 15_000);
   }
 
-  /** Left click: attacks the entity (facing it first) or whatever the crosshair points at. */
-  async attack(entityId?: number): Promise<HitTarget> {
-    return this.requireProbe().request('attack', entityId === undefined ? {} : { entityId });
+  /**
+   * Left click: attacks the entity (facing it first) or whatever the crosshair points at. A hit does damage in
+   * proportion to the attack cooldown (the result's {@code strength}, 0 to 1), so hitting in a tight loop barely
+   * hurts, so by default ({@code charged}) it first waits (up to {@code timeoutMs}, default 2 s) until the cooldown is
+   * full; pass {@code charged: false} for an immediate click.
+   */
+  async attack(entityId?: number, opts: { charged?: boolean; timeoutMs?: number } = {}): Promise<HitTarget> {
+    const { charged = true, timeoutMs = 2000 } = opts;
+    return this.requireProbe().request(
+      'attack',
+      { ...(entityId === undefined ? {} : { entityId }), charged, timeoutMs },
+      timeoutMs + 15_000,
+    );
   }
 
   /**
@@ -195,10 +205,17 @@ export class Client extends ClientCore {
   /**
    * Clicks a slot of the open container (or the inventory). Modes: pickup (default; button 0 left, 1 right),
    * quick_move (shift click), swap (button = hotbar slot 0-8 or 40 for the offhand), clone, throw (button 1 =
-   * whole stack), quick_craft, pickup_all. Slot -999 is outside the window.
+   * whole stack), quick_craft, pickup_all. Slot -999 is outside the window. {@code slot} is a slot of the open window
+   * (an inventory item's {@code menuSlot}); with {@code inventory} it is a slot as {@link inventory} numbers them
+   * (0-8 hotbar, 9-35 main, 36-39 armor, 40 offhand), looked up in the window.
    */
-  async click(slot: number, opts: { button?: number; mode?: ClickMode } = {}): Promise<ContainerInfo> {
-    return this.requireProbe().request('click', { slot, button: opts.button ?? 0, mode: opts.mode ?? 'pickup' });
+  async click(slot: number, opts: { button?: number; mode?: ClickMode; inventory?: boolean } = {}): Promise<ContainerInfo> {
+    return this.requireProbe().request('click', {
+      slot,
+      button: opts.button ?? 0,
+      mode: opts.mode ?? 'pickup',
+      inventory: !!opts.inventory,
+    });
   }
 
   /**

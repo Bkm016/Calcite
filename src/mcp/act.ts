@@ -147,10 +147,14 @@ export function registerActTools({ server, manager, tasks }: ToolContext): void 
     {
       title: 'Attack (left click)',
       description:
-        'Attacks the entity with this id (from get_entities; the player turns to it, must be within reach) or, without an id, whatever the crosshair points at.',
-      inputSchema: { client: clientName, entityId: z.number().int().optional() },
+        'Attacks the entity with this id (from get_entities; the player turns to it, must be within reach) or, without an id, whatever the crosshair points at. Damage scales with the attack cooldown (strength in the result); by default it waits for a full cooldown first (charged false hits at once), so repeated hits really hurt.',
+      inputSchema: {
+        client: clientName,
+        entityId: z.number().int().optional(),
+        charged: z.boolean().optional().describe('Wait for the attack cooldown to fill before hitting (default true)'),
+      },
     },
-    async ({ client, entityId }) => manager.resolve(client).attack(entityId),
+    async ({ client, entityId, charged }) => manager.resolve(client).attack(entityId, { charged }),
   );
 
   tool(

@@ -286,6 +286,7 @@ await bot.stop();
 | `javaPath` / `allowJavaDownload` | 指定 Java 路径 / 是否允许自动下载 |
 | `jvmArgs` / `gameArgs` | 额外的 JVM 参数 / 游戏参数 |
 | `renderDistance` / `maxFps` | 渲染距离 / 帧率上限 |
+| `language` | 游戏语言，如 `zh_cn`；决定提示、物品名与聊天文本的语言，默认 `en_us` |
 | `reconnect` | `false` 表示关闭自动重连，或传入 `{ maxAttempts }`（默认 10） |
 | `startTimeoutMs` | 启动总超时，含下载时间，默认 15 分钟 |
 
@@ -307,7 +308,7 @@ await bot.stop();
 | `walkTo(x, z, { y, range, sprint, direct, stopOnDamage, timeoutMs })` | 寻路走到坐标（`direct` 为直线行走），返回 `{ arrived, reason?, distance, x, y, z, replans? }` |
 | `task()` | 正在运行的长时操作：`{ running, name?, ticks?, ...进度 }` |
 | `move(controls, { ticks })` / `stopActions()` | 按住按键若干 tick / 停止所有持续操作 |
-| `attack(entityId?)` | 攻击实体，省略时攻击准星目标 |
+| `attack(entityId?, { charged })` | 攻击实体，省略时攻击准星目标；伤害与攻击冷却成正比，默认先等冷却满再出手（`charged: false` 立即出手），结果的 `strength` 为出手时的冷却（0–1） |
 | `use({ entityId?, block?, holdTicks? })` | 右键实体、方块或使用手中物品 |
 | `dig(block, { stopOnDamage, timeoutMs })` | 挖掘方块，返回 `{ broken, block, ticks?, reason? }` |
 | `surroundings({ radius })` | 周边概况，含以玩家为中心的俯视字符地图 `map` 与图例 `legend` |
@@ -316,7 +317,7 @@ await bot.stop();
 | `block(pos)` / `target()` | 查询方块 / 准星目标 |
 | `inventory()` / `selectSlot(n)` | 查询背包 / 切换快捷栏 |
 | `container({ waitMs })` / `closeContainer()` | 查询 / 关闭当前容器 |
-| `click(slot, { button, mode })` | 点击容器槽位 |
+| `click(slot, { button, mode, inventory })` | 点击容器槽位；`inventory: true` 时 `slot` 按 `inventory()` 的背包编号（0–8 快捷栏、9–35 主背包、36–39 盔甲、40 副手）换算，否则是窗口槽位，即物品的 `menuSlot`（背包界面里副手是 45） |
 | `transfer(item, { to, count, slot })` | 在容器与背包之间搬运物品，返回 `{ item, moved, container }` |
 | `drop({ all })` | 丢弃手中物品 |
 | `extensions()` / `call(name, args)` | 列出扩展命令 / 调用扩展命令 |
@@ -346,7 +347,7 @@ await bot.transfer('raw_iron', { slot: 0 });                // 原料放入输�
 await bot.transfer('coal');                                 // 不指定槽位时由游戏分配（燃料进燃料槽）
 ```
 
-容器槽位编号与原版一致：容器自身的槽位在前（`0` 到 `containerSlots - 1`），玩家背包在后；`item.inventorySlot` 给出对应的背包槽位。`click` 的 `mode` 可取 `pickup`（默认，`button` 0 为左键、1 为右键）、`quick_move`（Shift+点击）、`swap`（数字键，`button` 为快捷栏序号 0–8）、`clone`、`throw`、`quick_craft`、`pickup_all`；槽位 `-999` 表示点击界面外部。未打开容器时，`click` 作用于玩家自身的背包界面。
+`inventory()` 的物品同时给出 `slot`（背包编号）和 `menuSlot`（当前窗口里的编号，窗口没显示它时为 `null`）。容器槽位编号与原版一致：容器自身的槽位在前（`0` 到 `containerSlots - 1`），玩家背包在后；`item.inventorySlot` 给出对应的背包槽位。`click` 的 `mode` 可取 `pickup`（默认，`button` 0 为左键、1 为右键）、`quick_move`（Shift+点击）、`swap`（数字键，`button` 为快捷栏序号 0–8）、`clone`、`throw`、`quick_craft`、`pickup_all`；槽位 `-999` 表示点击界面外部。未打开容器时，`click` 作用于玩家自身的背包界面。
 
 操作距离与生存模式一致（约 4.5 格），目标超过 6 格时返回 `out_of_reach` 错误，需先用 `walkTo` 靠近。
 

@@ -243,7 +243,10 @@ export abstract class ClientCore extends EventEmitter<ClientEvents> {
       this.events.push(event);
       this.emit('event', event);
     });
-    await writeOptions(this.gameDir, defaultOptions({ renderDistance: this.options.renderDistance, maxFps: this.options.maxFps }));
+    await writeOptions(
+      this.gameDir,
+      defaultOptions({ renderDistance: this.options.renderDistance, maxFps: this.options.maxFps, language: this.options.language }),
+    );
 
     const jvmArgs = gameJvmArgs({
       agent: names.kind === 'unsupported' ? undefined : `${probeJar}=${run.configFile}`,

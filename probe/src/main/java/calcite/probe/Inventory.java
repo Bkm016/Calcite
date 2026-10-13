@@ -24,7 +24,7 @@ final class Inventory implements Ops.Module {
         ops.add("inventory", a -> game.withPlayer((mc, player) -> inventory(player)));
         ops.add("select_slot", a -> selectSlot(a.integer("slot", -1)));
         ops.add("container", a -> container(a.millis("waitMs", 0)));
-        ops.add("click", a -> click(a.integer("slot", -1000), a.integer("button", 0), a.str("mode", "pickup")));
+        ops.add("click", a -> click(a.integer("slot", -1000), a.integer("button", 0), a.str("mode", "pickup"), a.flag("inventory", false)));
         ops.action("close_container", a -> game.withPlayer((mc, player) -> close(mc, player)));
         ops.add("drop", a -> game.withPlayer((mc, player) -> drop(mc, player, a.flag("all", false))));
         ops.add("transfer", a -> game.withPlayer((mc, player) -> transfer(mc, player, World.qualify(a.str("item")),
@@ -35,15 +35,20 @@ final class Inventory implements Ops.Module {
         Object inv = menus.playerInventory(player);
         Map<String, Object> out = new LinkedHashMap<String, Object>();
         out.put("selected", menus.selectedSlot(inv));
+        Object menu = menus.menu(player);
         List<Map<String, Object>> items = new ArrayList<Map<String, Object>>();
         for (int i = 0, n = menus.size(inv); i < n; i++) {
             Map<String, Object> item = menus.item(menus.stackAt(inv, i));
             if (item != null) {
-                items.add(withSlot(i, item));
+                Map<String, Object> m = withSlot(i, item);
+                int menuSlot = menus.menuSlotOf(menu, inv, i);
+                m.put("menuSlot", menuSlot < 0 ? null : menuSlot);
+                items.add(m);
             }
         }
         out.put("items", items);
-        out.put("slots", "0-8 hotbar, 9-35 main, 36-39 armor (feet..head), 40 offhand");
+        out.put("slots", "slot: 0-8 hotbar, 9-35 main, 36-39 armor (feet..head), 40 offhand; menuSlot is the number click() takes"
+                + " (or click(slot, {inventory: true}) with slot)");
         return out;
     }
 
@@ -146,9 +151,18 @@ final class Inventory implements Ops.Module {
         return v instanceof Number ? Status.round(((Number) v).doubleValue() / pixels, 2) : null;
     }
 
-    private Map<String, Object> click(final int slot, final int button, final String mode) throws Exception {
+    /** {@code inventory}: {@code requested} is a slot of the player's inventory (as in {@code inventory}), not a menu slot. */
+    private Map<String, Object> click(final int requested, final int button, final String mode, final boolean inventory) throws Exception {
         return game.withPlayer((mc, player) -> {
-            int size = menus.slots(menus.menu(player)).size();
+            Object menu = menus.menu(player);
+            int slot = requested;
+            if (inventory) {
+                slot = menus.menuSlotOf(menu, menus.playerInventory(player), requested);
+                if (slot < 0) {
+                    throw new ProbeException("bad_request", "Inventory slot " + requested + " is not shown in the open window");
+                }
+            }
+            int size = menus.slots(menu).size();
             if (slot != -999 && (slot < 0 || slot >= size)) {
                 throw new ProbeException("bad_request", "Slot must be 0-" + (size - 1) + " or -999");
             }

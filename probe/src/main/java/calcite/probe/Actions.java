@@ -1,6 +1,7 @@
 package calcite.probe;
 
 import java.lang.reflect.Field;
+import java.lang.reflect.Method;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
@@ -29,7 +30,7 @@ final class Actions implements Ops.Module {
     @Override
     public void register(Ops ops) {
         ops.add("look", a -> look(a.optNum("yaw"), a.optNum("pitch"), a.has("x") ? new double[]{a.num("x"), a.num("y"), a.num("z")} : null));
-        ops.add("attack", a -> attack(a.optInt("entityId")));
+        ops.add("attack", a -> attack(a.optInt("entityId"), a.flag("charged", false), a.millis("timeoutMs", 2000)));
         ops.add("use", a -> use(a.optInt("entityId"), a.optBlockPos(), a.str("face", null), a.integer("holdTicks", 0)));
         ops.add("dig", a -> controls.run(new Dig(a.blockPos(), a.str("face", null)).stopOnDamage(a.flag("stopOnDamage", false)),
                 a.millis("timeoutMs", 30000)));
@@ -51,14 +52,37 @@ final class Actions implements Ops.Module {
         });
     }
 
+    /** Attack cooldown at which a hit does (nearly) full damage. */
+    private static final double FULL_STRENGTH = 0.95;
+
+    /** How charged the attack cooldown is, 0 to 1; a hit below 1 does proportionally less damage. */
+    private double attackStrength(Object player) {
+        Method m = ref.method(player.getClass(), "getAttackStrengthScale", 1);
+        try {
+            Object v = m == null ? null : m.invoke(player, 0f);
+            return v instanceof Number ? Status.round(((Number) v).doubleValue(), 2) : 1.0;
+        } catch (ReflectiveOperationException e) {
+            return 1.0;
+        }
+    }
+
+    private double strength() throws Exception {
+        return game.withPlayer((mc, player) -> attackStrength(player));
+    }
+
     /** Left click: attacks entity {@code entityId} (facing it first), or whatever the crosshair targets. */
-    Map<String, Object> attack(final Integer entityId) throws Exception {
+    Map<String, Object> attack(final Integer entityId, final boolean charged, final long timeoutMs) throws Exception {
+        long deadline = System.currentTimeMillis() + timeoutMs;
+        while (charged && strength() < FULL_STRENGTH && System.currentTimeMillis() < deadline) {
+            Thread.sleep(25);
+        }
         return game.withPlayer((mc, player) -> {
             game.requireAlive(player);
             if (entityId != null) {
                 aim.targetEntity(mc, player, aim.entityInReach(mc, player, entityId));
             }
             Map<String, Object> target = world.describeHit(mc);
+            target.put("strength", attackStrength(player));
             ref.setIfPresent(mc, "missTime", 0);
             ref.callOrFail(mc, "startAttack");
             return target;

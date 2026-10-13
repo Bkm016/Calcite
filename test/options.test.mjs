@@ -16,3 +16,8 @@ test('options merge keeps user keys and overrides managed ones', async (t) => {
   assert.equal(map.get('key_key.jump'), 'key.keyboard.space');
   assert.equal(parseOptions(serializeOptions(map)).size, map.size);
 });
+
+test('defaultOptions sets the game language only when asked', () => {
+  assert.equal(defaultOptions().lang, undefined);
+  assert.equal(defaultOptions({ language: 'zh_CN' }).lang, 'zh_cn');
+});

@@ -65,6 +65,8 @@ export interface ClientOptions {
   gameArgs?: string[];
   renderDistance?: number;
   maxFps?: number;
+  /** Game language, e.g. "zh_cn" or "en_us" (default: the game's, en_us). Decides the language of tips, item names and chat text. */
+  language?: string;
   /** Reconnect (relaunch) after a disconnect or crash. Default: enabled, 10 attempts. */
   reconnect?: boolean | { maxAttempts?: number };
   /** How long to wait for the server port before launching (default 120 s). */
@@ -284,6 +286,8 @@ export interface HitTarget {
   block?: string;
   entity?: EntityInfo;
   holdTicks?: number;
+  /** attack: the attack cooldown when the hit landed, 0 to 1 (damage scales with it). */
+  strength?: number;
 }
 
 export interface BlockInfo extends BlockPosition {
@@ -306,8 +310,12 @@ export interface ItemInfo {
 export interface InventoryInfo {
   /** Selected hotbar slot (0-8). */
   selected: number;
-  /** Non-empty slots: 0-8 hotbar, 9-35 main, 36-39 armor, 40 offhand. */
-  items: (ItemInfo & { slot: number })[];
+  /**
+   * Non-empty slots: 0-8 hotbar, 9-35 main, 36-39 armor, 40 offhand. {@code menuSlot} is the same slot as the open
+   * window numbers it (what {@link Client.click} takes; the offhand is 45 in the inventory window); null when the
+   * open window does not show it.
+   */
+  items: (ItemInfo & { slot: number; menuSlot: number | null })[];
 }
 
 export interface ContainerInfo {

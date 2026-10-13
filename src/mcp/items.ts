@@ -88,15 +88,16 @@ export function registerItemTools({ server, manager, tasks }: ToolContext): void
     {
       title: 'Click a container slot',
       description:
-        'Clicks a slot of the open container (or of the inventory when none is open) and returns the new contents. mode: pickup (button 0 left / 1 right), quick_move (shift click: move the stack between container and inventory), swap (button = hotbar slot 0-8, 40 offhand), throw (button 1 = whole stack), clone, quick_craft, pickup_all. Slot -999 clicks outside (drops the carried stack).',
+        'Clicks a slot of the open container (or of the inventory when none is open) and returns the new contents. slot is a window slot (menuSlot in get_inventory/get_container; the offhand is 45 in the inventory window); with inventory true it is an inventory slot number (0-8 hotbar, 9-35 main, 36-39 armor, 40 offhand). mode: pickup (button 0 left / 1 right), quick_move (shift click: move the stack between container and inventory), swap (button = hotbar slot 0-8, 40 offhand), throw (button 1 = whole stack), clone, quick_craft, pickup_all. Slot -999 clicks outside (drops the carried stack).',
       inputSchema: {
         client: clientName,
         slot: z.number().int().min(-999),
+        inventory: z.boolean().default(false).describe('slot is an inventory slot number rather than a window slot'),
         button: z.number().int().min(0).max(40).default(0),
         mode: z.enum(['pickup', 'quick_move', 'swap', 'clone', 'throw', 'quick_craft', 'pickup_all']).default('pickup'),
       },
     },
-    async ({ client, slot, button, mode }) => manager.resolve(client).click(slot, { button, mode }),
+    async ({ client, slot, inventory, button, mode }) => manager.resolve(client).click(slot, { button, mode, inventory }),
   );
 
   tool(

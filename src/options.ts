@@ -5,7 +5,9 @@ import { join } from 'node:path';
  * Game options Calcite enforces so an unattended client never blocks on first-run screens and stays cheap.
  * Unknown keys are ignored by versions that do not have them.
  */
-export function defaultOptions(opts: { renderDistance?: number; maxFps?: number; muted?: boolean } = {}): Record<string, string> {
+export function defaultOptions(
+  opts: { renderDistance?: number; maxFps?: number; muted?: boolean; language?: string } = {},
+): Record<string, string> {
   return {
     onboardAccessibility: 'false',
     skipMultiplayerWarning: 'true',
@@ -18,6 +20,7 @@ export function defaultOptions(opts: { renderDistance?: number; maxFps?: number;
     simulationDistance: String(Math.min(opts.renderDistance ?? 8, 8)),
     maxFps: String(opts.maxFps ?? 30),
     ...(opts.muted === false ? {} : { soundCategory_master: '0.0' }),
+    ...(opts.language ? { lang: opts.language.toLowerCase() } : {}),
   };
 }
 
