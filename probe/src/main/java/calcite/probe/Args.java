@@ -54,13 +54,21 @@ final class Args {
     }
 
     int integer(String key, int def) {
-        Object v = map.get(key);
-        return v instanceof Number ? ((Number) v).intValue() : def;
+        Integer v = optInt(key);
+        return v == null ? def : v;
     }
 
+    /** A whole number argument; a fraction is rejected instead of being cut off. */
     Integer optInt(String key) {
         Object v = map.get(key);
-        return v instanceof Number ? ((Number) v).intValue() : null;
+        if (!(v instanceof Number)) {
+            return null;
+        }
+        double d = ((Number) v).doubleValue();
+        if (d != Math.rint(d) || Math.abs(d) > Integer.MAX_VALUE) {
+            throw bad("Argument " + key + " must be a whole number, got " + v);
+        }
+        return (int) d;
     }
 
     long millis(String key, long def) {

@@ -48,6 +48,17 @@ class ArgsTest {
     }
 
     @Test
+    void integersMustBeWhole() {
+        Map<String, Object> raw = new HashMap<String, Object>();
+        raw.put("slot", 3.0);
+        raw.put("half", 1.5);
+        Args a = new Args(raw);
+        assertEquals(3, a.integer("slot", 0), "a whole number sent as a double is fine");
+        assertEquals("bad_request", assertThrows(ProbeException.class, () -> a.integer("half", 0)).code());
+        assertEquals("bad_request", assertThrows(ProbeException.class, () -> a.optInt("half")).code());
+    }
+
+    @Test
     void parsesInlineAgentArguments() {
         Map<String, String> args = Probe.parseArgs("port=1,token=x");
         assertEquals("1", args.get("port"));

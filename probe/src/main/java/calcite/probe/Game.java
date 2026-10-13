@@ -118,6 +118,13 @@ public final class Game {
         return onGameThread(() -> task.run(mc, requirePlayer(mc)), TIMEOUT_MS);
     }
 
+    /** Fails with {@code dead} while the player is dead (the death screen is up until {@code respawn}). */
+    void requireAlive(Object player) {
+        if (health(player) == 0) {
+            throw new ProbeException("dead", "The player is dead; respawn first");
+        }
+    }
+
     Object requirePlayer(Object mc) {
         Object player = optGet(mc, "player");
         if (player == null) {

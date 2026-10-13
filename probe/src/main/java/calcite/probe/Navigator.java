@@ -70,6 +70,7 @@ final class Navigator implements Ops.Module {
 
         @Override
         void start(Object mc, Object player) {
+            game.requireAlive(player);
             if (!direct) {
                 plan(mc, player);
             }

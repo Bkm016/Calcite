@@ -9,6 +9,9 @@
 ### 修复
 
 - `use` 指定的方块在客户端是空气或区块未加载时，返回 `no_block` 错误并说明原因，不再静默点空。
+- `block` 查询未加载的区块时返回 `loaded: false`；此前客户端对任何未加载位置都答 `void_air`，被当成空气。`dig` 与 `use` 的报错同步区分“区块未加载”。
+- 整数参数传了小数（如 `selectSlot(1.5)`）时返回 `bad_request`，不再悄悄截断；`look` 传 NaN 或无穷同样报错，不再被忽略。
+- 玩家死亡后，`use`、`attack`、`dig`、`walkTo` 返回 `dead` 错误并提示先 `respawn`，不再返回含糊的 `no_path` 或空操作。
 
 ## 0.5.1
 

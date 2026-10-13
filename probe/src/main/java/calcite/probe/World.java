@@ -77,10 +77,16 @@ final class World implements Ops.Module {
         return name == null ? direction.toString().toLowerCase(Locale.ROOT) : name.toString();
     }
 
-    /** The block state at a position, or null outside a world. */
+    /** The block state at a position, or null outside a world or in a chunk the client has not loaded (it would answer void air). */
     Object blockState(Object mc, int[] pos) throws Exception {
         Object level = game.optGet(mc, "level");
         if (level == null) {
+            return null;
+        }
+        // ClientLevel#hasChunk answers true for any coordinates; the chunk source returns null for a chunk it does not hold
+        Object source = game.optCall(level, "getChunkSource");
+        Method chunkNow = source == null ? null : ref.method(source.getClass(), "getChunkNow", 2);
+        if (chunkNow != null && chunkNow.invoke(source, pos[0] >> 4, pos[2] >> 4) == null) {
             return null;
         }
         Method get = ref.method(level.getClass(), "getBlockState", 1);

@@ -91,6 +91,9 @@ export class Client extends ClientCore {
 
   /** Turns the player to an absolute rotation (degrees; yaw 0 = south, pitch -90 = up) or towards a point. */
   async look(to: { yaw?: number; pitch?: number } | { x: number; y: number; z: number }): Promise<{ yaw: number; pitch: number }> {
+    for (const [key, value] of Object.entries(to)) {
+      if (!Number.isFinite(value)) throw new CalciteError('bad_request', `look: ${key} must be a finite number, got ${String(value)}`);
+    }
     return this.requireProbe().request('look', to);
   }
 

@@ -54,6 +54,7 @@ final class Actions implements Ops.Module {
     /** Left click: attacks entity {@code entityId} (facing it first), or whatever the crosshair targets. */
     Map<String, Object> attack(final Integer entityId) throws Exception {
         return game.withPlayer((mc, player) -> {
+            game.requireAlive(player);
             if (entityId != null) {
                 aim.targetEntity(mc, player, aim.entityInReach(mc, player, entityId));
             }
@@ -70,6 +71,7 @@ final class Actions implements Ops.Module {
      */
     Map<String, Object> use(final Integer entityId, final int[] block, final String face, final int holdTicks) throws Exception {
         return game.withPlayer((mc, player) -> {
+            game.requireAlive(player);
             if (entityId != null) {
                 aim.targetEntity(mc, player, aim.entityInReach(mc, player, entityId));
             } else if (block != null) {
@@ -122,9 +124,10 @@ final class Actions implements Ops.Module {
 
         @Override
         void start(Object mc, Object player) throws Exception {
+            game.requireAlive(player);
             Object state = world.blockState(mc, pos);
             if (state == null || game.isAir(state)) {
-                throw new ProbeException("no_block", "There is no block at " + pos[0] + " " + pos[1] + " " + pos[2]);
+                throw new ProbeException("no_block", "There is no block at " + pos[0] + " " + pos[1] + " " + pos[2] + (state == null ? " (chunk not loaded)" : ""));
             }
             aim.checkReach(player, pos[0] + 0.5, pos[1] + 0.5, pos[2] + 0.5);
             blockId = world.blockId(state);
