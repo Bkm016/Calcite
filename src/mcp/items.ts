@@ -16,6 +16,22 @@ export function registerItemTools({ server, manager, tasks }: ToolContext): void
 
   tool(
     server,
+    'get_item',
+    {
+      title: 'Item details',
+      description:
+        "One stack with the tooltip lines the client shows on hover: enchantments, lore, attributes, potion effects. slot is an inventory slot (0-8 hotbar, 9-35 main, 36-39 armor, 40 offhand; default: the held item); with inventory false it is a window slot of the open container (an item's menuSlot).",
+      inputSchema: {
+        client: clientName,
+        slot: z.number().int().min(0).optional().describe('Inventory slot, default: the selected hotbar slot'),
+        inventory: z.boolean().default(true).describe('slot is an inventory slot rather than a window slot'),
+      },
+    },
+    async ({ client, slot, inventory }) => manager.resolve(client).item(slot, { inventory }),
+  );
+
+  tool(
+    server,
     'select_slot',
     {
       title: 'Select hotbar slot',

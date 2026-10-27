@@ -303,6 +303,24 @@ public final class Game {
         return Boolean.TRUE.equals(optCall(entity, "isInWater")) || Boolean.TRUE.equals(optCall(entity, "isInLava"));
     }
 
+    /** True when the entity has been removed from the level (despawned, dead and removed, ...). */
+    boolean isRemoved(Object entity) {
+        Object removed = optCall(entity, "isRemoved");
+        if (removed == null) {
+            removed = optGet(entity, "removed");
+        }
+        return Boolean.TRUE.equals(removed);
+    }
+
+    /** Movement per client tick as {x, y, z}, or null when the version does not expose it. */
+    double[] velocity(Object entity) {
+        Object v = optCall(entity, "getDeltaMovement");
+        if (v == null) {
+            v = optGet(entity, "deltaMovement");
+        }
+        return v == null ? null : vec(optGet(v, "x"), optGet(v, "y"), optGet(v, "z"));
+    }
+
     /** Dimension id of a level, e.g. "minecraft:overworld". */
     String dimension(Object level) {
         return level == null ? null : keyLocation(optCall(level, "dimension"));

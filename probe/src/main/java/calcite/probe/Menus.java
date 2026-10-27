@@ -1,6 +1,7 @@
 package calcite.probe;
 
 import java.lang.reflect.Method;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -45,6 +46,84 @@ final class Menus {
             return null;
         }
         return world.registryKey("ITEM", game.optCall(stack, "getItem"));
+    }
+
+    /**
+     * The lines the client shows when hovering this stack: name, enchantments, lore, attributes, potion
+     * effects and the like. 1.20.5+ takes a tooltip context, older versions only the player and a flag;
+     * a version without the API returns an empty list instead of failing.
+     */
+    List<String> tooltip(Object mc, Object player, Object stack) {
+        List<String> lines = new ArrayList<String>();
+        if (itemId(stack) == null) {
+            return lines;
+        }
+        Method lines3 = ref.method(stack.getClass(), "getTooltipLines", 3);
+        Method lines2 = lines3 == null ? ref.method(stack.getClass(), "getTooltipLines", 2) : null;
+        if (lines3 == null && lines2 == null) {
+            return lines;
+        }
+        try {
+            Object result = lines3 != null
+                    ? lines3.invoke(stack, tooltipContext(mc), player, tooltipFlag())
+                    : lines2.invoke(stack, player, tooltipFlag());
+            if (result instanceof List) {
+                for (Object line : (List<?>) result) {
+                    String text = game.text(line);
+                    if (text != null) {
+                        lines.add(text);
+                    }
+                }
+            }
+        } catch (Throwable ignored) {
+            // an unsupported version or a stack whose tooltip throws: report the fields we could read
+        }
+        return lines;
+    }
+
+    /**
+     * {@code TooltipFlag.NORMAL}: everything a player sees without advanced tooltips (F3+H). Older versions
+     * keep it as an enum constant of the nested TooltipFlag.Default, newer ones as a field of TooltipFlag.
+     */
+    private Object tooltipFlag() {
+        for (String name : new String[]{"net.minecraft.world.item.TooltipFlag", "net.minecraft.world.item.TooltipFlag$Default"}) {
+            Class<?> type = ref.cls(name);
+            if (type == null) {
+                continue;
+            }
+            try {
+                Object flag = ref.getStatic(type, "NORMAL");
+                if (flag != null) {
+                    return flag;
+                }
+            } catch (ReflectiveOperationException ignored) {
+                // try the other holder
+            }
+        }
+        return null;
+    }
+
+    /** {@code Item.TooltipContext.EMPTY}, or a context for the client's level, or null before 1.20.5. */
+    private Object tooltipContext(Object mc) {
+        Class<?> type = ref.cls("net.minecraft.world.item.Item$TooltipContext");
+        if (type == null) {
+            return null;
+        }
+        try {
+            Object empty = ref.getStatic(type, "EMPTY");
+            if (empty != null) {
+                return empty;
+            }
+        } catch (ReflectiveOperationException ignored) {
+            // older versions of the interface only offer of(Level)
+        }
+        Object level = game.optGet(mc, "level");
+        Method of = ref.method(type, "of", 1);
+        try {
+            return of != null && level != null ? of.invoke(null, level) : null;
+        } catch (ReflectiveOperationException e) {
+            return null;
+        }
     }
 
     int count(Object stack) {

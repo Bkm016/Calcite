@@ -24,6 +24,14 @@ final class Navigator implements Ops.Module {
     private static final int MAX_REPLANS = 6;
     /** Ticks without getting closer before the player counts as stuck. */
     private static final int STUCK_TICKS = 40;
+    /** Heading error above which the player turns on the spot instead of running sideways. */
+    private static final double ALIGNED_DEGREES = 60;
+    /** Sprinting needs a straighter heading than walking, or the player zigzags instead of running. */
+    private static final double SPRINT_ALIGNED_DEGREES = 20;
+    /** Release the forward key this far from the exact goal so the player comes to rest on it. */
+    private static final double BRAKE = 0.35;
+    /** Only sprint while this far from the goal; the last stretch is walked so it is not overshot. */
+    private static final double SPRINT_DISTANCE = 3;
 
     private final Game game;
     private final Aim aim;
@@ -111,7 +119,7 @@ final class Navigator implements Ops.Module {
                 return;
             }
             if (direct) {
-                steer(player, goal.x, goal.z, false, true, true);
+                steer(player, goal.x, goal.z, false, true, true, BRAKE);
                 return;
             }
             List<Path.Step> steps = path.steps;
@@ -121,7 +129,7 @@ final class Navigator implements Ops.Module {
             Path.Step step = steps.get(index);
             if (index == steps.size() - 1 && at(pos, step)) {
                 if (path.complete) {
-                    steer(player, goal.x, goal.z, false, false, true); // last stretch to the exact point
+                    steer(player, goal.x, goal.z, false, false, true, BRAKE); // last stretch to the exact point
                 } else {
                     replanOr(mc, player, "no_path", false);
                 }
@@ -133,7 +141,7 @@ final class Navigator implements Ops.Module {
                 return;
             }
             boolean dive = step.swim && step.y < pos[1] - 0.5;
-            steer(player, step.x + 0.5, step.z + 0.5, step.jump && toStep < 1.4, straightAhead(steps), !dive);
+            steer(player, step.x + 0.5, step.z + 0.5, step.jump && toStep < 1.4, straightAhead(steps), !dive, 0);
         }
 
         /** Takes a finished plan; false while it is still being computed. */
@@ -163,13 +171,29 @@ final class Navigator implements Ops.Module {
             }
         }
 
-        /** Faces (x, z) and walks there, jumping when asked or against a wall; in water {@code swimUp} keeps afloat. */
-        private void steer(Object player, double x, double z, boolean jump, boolean straight, boolean swimUp) throws Exception {
-            aim.face(player, x, z);
+        /**
+         * Turns smoothly towards (x, z) and walks there, jumping when asked or against a wall; in water
+         * {@code swimUp} keeps afloat. The forward key is only held while roughly facing the target and, for the
+         * exact goal, until {@code brake}: intermediate waypoints are passed through without braking, because
+         * stopping short of one would never register as reached.
+         */
+        private void steer(Object player, double x, double z, boolean jump, boolean straight, boolean swimUp, double brake)
+                throws Exception {
+            double[] pos = game.position(player);
+            Double yaw = game.yaw(player);
+            if (yaw == null) {
+                throw new ProbeException("unsupported", "Player rotation is not available");
+            }
+            double error = Math.abs(Aim.wrapDegrees(Aim.yawTowards(x - pos[0], z - pos[2]) - yaw));
+            aim.faceSmooth(player, x, z);
+            double distance = horizontal(pos, x, z);
             boolean swimming = game.inFluid(player);
             boolean blocked = Boolean.TRUE.equals(game.optGet(player, "horizontalCollision"));
-            controls.hold(Key.FORWARD, true);
-            controls.hold(Key.SPRINT, sprint && straight && !swimming && remaining(game.position(player)) > 3);
+            boolean facing = error < ALIGNED_DEGREES;
+            boolean sprinting = sprint && straight && facing && error < SPRINT_ALIGNED_DEGREES && !swimming
+                    && remaining(pos) > SPRINT_DISTANCE;
+            controls.hold(Key.FORWARD, facing && distance > brake);
+            controls.hold(Key.SPRINT, sprinting);
             controls.hold(Key.JUMP, swimming ? swimUp || blocked : (jump || blocked) && game.onGround(player));
         }
 

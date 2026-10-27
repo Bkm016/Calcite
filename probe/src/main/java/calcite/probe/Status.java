@@ -79,6 +79,17 @@ final class Status implements Ops.Module {
         }
         p.put("yaw", game.yaw(player));
         p.put("pitch", game.pitch(player));
+        double[] velocity = game.velocity(player);
+        if (velocity != null) {
+            p.put("vx", velocity[0]);
+            p.put("vy", velocity[1]);
+            p.put("vz", velocity[2]);
+        }
+        p.put("onGround", game.onGround(player));
+        Object inWater = game.optCall(player, "isInWater");
+        if (inWater instanceof Boolean) {
+            p.put("inWater", inWater);
+        }
         double health = game.health(player);
         if (health >= 0) {
             p.put("health", health);

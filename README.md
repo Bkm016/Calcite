@@ -45,7 +45,7 @@ Calcite 用于以编程方式驱动**真实的 Minecraft Java 版客户端**。�
 - **模组加载器**：一行参数安装 Fabric、Forge 或 NeoForge，并从本地文件、URL 或 Modrinth 加载模组（自动补全前置依赖），探针功能在模组环境中同样可用。
 - **玩家操作**：转向、移动、A* 寻路（绕墙、跳台阶、安全下落）、攻击、使用物品与方块、挖掘、切换快捷栏、丢弃物品，以及打开箱子等容器并点击槽位。操作走原版客户端逻辑，与真实玩家输入等价。
 - **合成与熔炉**：按配方书合成物品（2×2 用背包合成格，3×3 自动打开附近的工作台），在容器与背包之间按物品搬运，可直接给熔炉装原料和燃料。
-- **面向 Agent 的感知**：周边俯视字符地图、按 ID 或通配符搜索方块，以及受伤、死亡、背包变化、容器开关等内置游戏事件。
+- **面向 Agent 的感知**：周边俯视字符地图、按 ID 或通配符搜索方块、物品详情与悬浮提示（附魔、词缀、药水效果等），以及受伤、死亡、背包变化、容器开关等内置游戏事件。
 - **长时操作**：寻路、挖掘、合成可在后台运行，随时查询进度或取消；受到伤害时可自动中止。
 - **按需渲染**：默认不渲染画面，截图时临时渲染。单次截图约 0.5 秒，进服后首次截图需等待区块编译，约 2–4 秒。
 - **Java 自动管理**：按游戏版本自动选择 Java（render `off` 时原本需要 Java 8 的版本改用 Java 17，HeadlessMC 3 的 LWJGL 替身不支持 Java 8）；本机缺少时从 Eclipse Adoptium 下载 Temurin，并校验 SHA-256。HeadlessMC 3 本身运行在 Java 25 上，同样按需下载。
@@ -106,11 +106,12 @@ calcite launch play.example.com -V 1.21.11 -n Bot1
 | `:move <按键,...> [tick]` | 按住按键若干 tick（默认 20），按键为 `forward`、`back`、`left`、`right`、`jump`、`sneak`、`sprint`、`attack`、`use` |
 | `:stop` | 停止当前移动、挖掘等持续操作 |
 | `:task` | 查看正在运行的长时操作及进度 |
-| `:attack [实体ID]` | 攻击指定实体；省略时攻击准星所指 |
+| `:attack [实体ID] [秒数]` | 攻击指定实体；省略目标时攻击准星所指；给秒数则持续攻击该实体直至死亡、离开 6 格或超时 |
 | `:use [实体ID \| x y z] [tick]` | 右键实体或方块；省略目标时使用手中物品，可指定按住时长 |
 | `:dig <x> <y> <z>` | 挖掘方块直至破坏 |
 | `:block <x> <y> <z>` / `:target` | 查看方块 / 查看准星目标 |
 | `:inv` / `:slot <0-8>` | 查看背包 / 切换快捷栏 |
+| `:item [槽位]` | 查看物品详情与悬浮提示（省略槽位时为手持物品） |
 | `:craft <物品> [数量]` | 合成物品 |
 | `:container` / `:close` | 查看 / 关闭当前打开的容器 |
 | `:transfer <物品> [数量] [inventory]` | 把物品放进当前容器（加 `inventory` 则取回背包） |
@@ -200,7 +201,7 @@ claude mcp add calcite -- npx -y @bkm016/calcite mcp
 | `launch_client` | 启动客户端，可指定服务器、版本、离线用户名或微软账号、渲染模式、模组加载器与模组 |
 | `stop_client` | 停止客户端 |
 | `list_clients` | 列出当前管理的客户端 |
-| `get_state` | 获取生命周期阶段与游戏状态（界面、坐标、生命值、维度、帧率、断开原因） |
+| `get_state` | 获取生命周期阶段与游戏状态（界面、坐标、朝向、速度、是否着地、生命值、维度、帧率、断开原因） |
 | `surroundings` | 周边概况：俯视字符地图、脚下与所处方块、附近方块统计（含最近坐标）、附近实体、群系、时间、天气 |
 | `find_blocks` | 按 ID 或通配符（如 `*_ore`）搜索已加载区块中的方块，按距离排序 |
 | `get_entities` | 获取客户端已接收的实体，可按半径、类型、名称、UUID 过滤 |
@@ -213,16 +214,17 @@ claude mcp add calcite -- npx -y @bkm016/calcite mcp
 | `set_render` | 开启或关闭持续渲染 |
 | `respawn` | 死亡后重生 |
 | `look` | 设置视角，或看向指定坐标 |
-| `walk_to` | A* 寻路走到指定坐标，返回是否到达及失败原因（`no_path`、`stuck`、`off_path`、`timeout`、`damaged`） |
+| `walk_to` | A* 寻路走到指定坐标（平滑转向、到达前减速），返回是否到达及失败原因（`no_path`、`stuck`、`off_path`、`timeout`、`damaged`） |
 | `move` | 按住移动、跳跃、潜行、疾跑等按键若干 tick |
 | `stop_actions` | 停止所有持续操作并松开按键，正在运行的长时操作以 `cancelled` 结束 |
 | `get_task` | 查询正在运行的长时操作的进度，以及后台任务的结果；`waitSeconds` 可等待其结束 |
-| `attack` | 攻击实体（按 ID 或准星目标） |
+| `attack` | 攻击实体（按 ID 或准星目标）；给 `entityId` 与 `seconds` 时持续攻击，视线平滑跟随目标，目标死亡（`killed: true`）或离开 6 格（`reason: "out_of_reach"`）时结束 |
 | `use` | 右键：使用手中物品、与方块交互（开箱、放置）、与实体交互 |
 | `dig` | 挖掘方块直至破坏 |
 | `get_block` | 查询方块 ID 与方块状态 |
 | `get_target` | 查询准星所指的方块或实体 |
 | `get_inventory` | 查询背包、快捷栏与手持物品 |
+| `get_item` | 查询单个物品与悬浮提示（附魔、词缀、药水效果等）；`slot` 为背包槽位，省略时为手持物品，`inventory: false` 时按容器窗口槽位读取 |
 | `select_slot` | 切换快捷栏槽位 |
 | `craft` | 按配方书合成指定数量的物品，3×3 配方自动使用附近的工作台 |
 | `get_container` | 查询当前打开的容器（类型、标题、槽位物品；熔炉另含燃烧状态与进度） |
@@ -242,7 +244,7 @@ claude mcp add calcite -- npx -y @bkm016/calcite mcp
 
 仅运行一个客户端时，各工具的 `client` 参数可以省略。工具调用失败时返回 `isError` 结果，错误信息格式为 `[错误码] 描述`。
 
-`walk_to`、`dig`、`craft` 是长时操作，同一客户端同时只运行一个。默认等到结束再返回；传 `background: true` 则立即返回，之后用 `get_task` 跟进、用 `stop_actions` 取消。`walk_to` 与 `dig` 支持 `stopOnDamage`，受到伤害时以 `damaged` 中止，便于 Agent 及时应对。
+`walk_to`、`dig`、`craft` 与持续 `attack` 是长时操作，同一客户端同时只运行一个。默认等到结束再返回；传 `background: true` 则立即返回，之后用 `get_task` 跟进、用 `stop_actions` 取消。`walk_to`、`dig` 与持续 `attack` 支持 `stopOnDamage`，受到伤害时以 `damaged` 中止，便于 Agent 及时应对。
 
 ## Node.js API
 
@@ -308,7 +310,7 @@ await bot.stop();
 | `walkTo(x, z, { y, range, sprint, direct, stopOnDamage, timeoutMs })` | 寻路走到坐标（`direct` 为直线行走），返回 `{ arrived, reason?, distance, x, y, z, replans? }` |
 | `task()` | 正在运行的长时操作：`{ running, name?, ticks?, ...进度 }` |
 | `move(controls, { ticks })` / `stopActions()` | 按住按键若干 tick / 停止所有持续操作 |
-| `attack(entityId?, { charged })` | 攻击实体，省略时攻击准星目标；伤害与攻击冷却成正比，默认先等冷却满再出手（`charged: false` 立即出手），结果的 `strength` 为出手时的冷却（0–1） |
+| `attack(entityId?, { charged, seconds, stopOnDamage })` | 攻击实体，省略时攻击准星目标；伤害与攻击冷却成正比，默认先等冷却满再出手（`charged: false` 立即出手），结果的 `strength` 为出手时的冷却（0–1）。给 `entityId` 与 `seconds` 时持续攻击：视线平滑跟随目标、每击都满蓄力，直至目标死亡（`killed: true`）、离开 6 格（`reason: 'out_of_reach'`）或超时 |
 | `use({ entityId?, block?, holdTicks? })` | 右键实体、方块或使用手中物品 |
 | `dig(block, { stopOnDamage, timeoutMs })` | 挖掘方块，返回 `{ broken, block, ticks?, reason? }` |
 | `surroundings({ radius })` | 周边概况，含以玩家为中心的俯视字符地图 `map` 与图例 `legend` |
@@ -316,6 +318,7 @@ await bot.stop();
 | `craft(item, { count, timeoutMs })` | 合成物品，返回 `{ item, crafted, count, reason? }` |
 | `block(pos)` / `target()` | 查询方块 / 准星目标 |
 | `inventory()` / `selectSlot(n)` | 查询背包 / 切换快捷栏 |
+| `item(slot?, { inventory })` | 查询单个物品与悬浮提示；省略 `slot` 时为手持物品，`inventory: false` 时按窗口槽位读取（物品的 `menuSlot`） |
 | `container({ waitMs })` / `closeContainer()` | 查询 / 关闭当前容器 |
 | `click(slot, { button, mode, inventory })` | 点击容器槽位；`inventory: true` 时 `slot` 按 `inventory()` 的背包编号（0–8 快捷栏、9–35 主背包、36–39 盔甲、40 副手）换算，否则是窗口槽位，即物品的 `menuSlot`（背包界面里副手是 45） |
 | `transfer(item, { to, count, slot })` | 在容器与背包之间搬运物品，返回 `{ item, moved, container }` |
@@ -325,7 +328,9 @@ await bot.stop();
 
 事件：`phase`、`state`、`chat`、`log`、`exit`、`event`（游戏事件与扩展事件，`{ seq, time, name, data }`）。
 
-长时操作（`walkTo`、`dig`、`craft`）同一时间只运行一个；`stopActions()` 会让正在等待的调用以 `cancelled` 错误结束。
+长时操作（`walkTo`、`dig`、`craft`、持续 `attack`）同一时间只运行一个；`stopActions()` 会让正在等待的调用以 `cancelled` 错误结束。
+
+`state()` 的 `player` 还带 `vx`/`vy`/`vz`（每 tick 位移）、`onGround` 与 `inWater`；客户端每 250 ms 刷新一次状态流，便于按闭环控制及时修正。
 
 ### 玩家操作示例
 

@@ -30,7 +30,17 @@ final class Actions implements Ops.Module {
     @Override
     public void register(Ops ops) {
         ops.add("look", a -> look(a.optNum("yaw"), a.optNum("pitch"), a.has("x") ? new double[]{a.num("x"), a.num("y"), a.num("z")} : null));
-        ops.add("attack", a -> attack(a.optInt("entityId"), a.flag("charged", false), a.millis("timeoutMs", 2000)));
+        ops.add("attack", a -> {
+            Integer entityId = a.optInt("entityId");
+            int ticks = a.integer("ticks", 0);
+            if (ticks > 0) {
+                if (entityId == null) {
+                    throw new ProbeException("bad_request", "A continuous attack needs entityId");
+                }
+                return controls.run(new Attack(entityId).stopOnDamage(a.flag("stopOnDamage", false)), ticks * 50L);
+            }
+            return attack(entityId, a.flag("charged", false), a.millis("timeoutMs", 2000));
+        });
         ops.add("use", a -> use(a.optInt("entityId"), a.optBlockPos(), a.str("face", null), a.integer("holdTicks", 0)));
         ops.add("dig", a -> controls.run(new Dig(a.blockPos(), a.str("face", null)).stopOnDamage(a.flag("stopOnDamage", false)),
                 a.millis("timeoutMs", 30000)));
@@ -126,6 +136,76 @@ final class Actions implements Ops.Module {
     private void click(Object mc) throws Exception {
         ref.setIfPresent(mc, "rightClickDelay", 0);
         ref.callOrFail(mc, "startUseItem");
+    }
+
+    /**
+     * Keeps hitting one entity until it dies, walks out of reach, or the behavior times out. The view follows the
+     * entity smoothly and each hit is forced onto it, so a moving target stays locked instead of being re-aimed
+     * with a visible snap every tick.
+     */
+    private final class Attack extends Behavior {
+        private final int entityId;
+        private int attacks;
+        private Map<String, Object> entityInfo;
+
+        Attack(int entityId) {
+            super("attack");
+            this.entityId = entityId;
+        }
+
+        @Override
+        void start(Object mc, Object player) throws Exception {
+            game.requireAlive(player);
+            if (aim.entity(mc, entityId) == null) {
+                throw new ProbeException("no_entity", "No entity with id " + entityId + " near the player");
+            }
+        }
+
+        @Override
+        void tick(Object mc, Object player) throws Exception {
+            game.requireAlive(player);
+            Object entity = aim.entity(mc, entityId);
+            if (entity == null || game.isRemoved(entity) || game.health(entity) == 0) {
+                Map<String, Object> out = progress(player);
+                out.put("killed", true);
+                finish(out);
+                return;
+            }
+            double[] pos = game.position(entity);
+            if (aim.distance(player, pos[0], pos[1] + 0.5, pos[2]) > Aim.MAX_REACH) {
+                Map<String, Object> out = progress(player);
+                out.put("killed", false);
+                out.put("reason", "out_of_reach");
+                finish(out);
+                return;
+            }
+            entityInfo = game.describe(entity);
+            aim.trackEntity(mc, player, entity);
+            // the game ignores clicks until the cooldown is full (a hit then does full damage)
+            if (attackStrength(player) >= FULL_STRENGTH) {
+                ref.setIfPresent(mc, "missTime", 0);
+                ref.callOrFail(mc, "startAttack");
+                attacks++;
+            }
+        }
+
+        @Override
+        Map<String, Object> progress(Object player) {
+            Map<String, Object> out = new LinkedHashMap<String, Object>();
+            out.put("type", "entity");
+            if (entityInfo != null) {
+                out.put("entity", entityInfo);
+            }
+            out.put("attacks", attacks);
+            return out;
+        }
+
+        @Override
+        Map<String, Object> stopped(Object player, String reason) {
+            Map<String, Object> out = super.stopped(player, reason);
+            out.put("killed", false);
+            return out;
+        }
     }
 
     /**

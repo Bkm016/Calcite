@@ -130,6 +130,12 @@ export interface PlayerState {
   z?: number;
   yaw?: number;
   pitch?: number;
+  /** Movement in blocks per game tick. */
+  vx?: number;
+  vy?: number;
+  vz?: number;
+  onGround?: boolean;
+  inWater?: boolean;
   health?: number;
   food?: number;
   /** survival, creative, adventure or spectator. */
@@ -268,10 +274,10 @@ export interface TransferResult {
   container: ContainerInfo;
 }
 
-/** The action that is running (walk_to, dig, craft) and its progress. */
+/** The action that is running (walk_to, dig, craft, continuous attack) and its progress. */
 export interface TaskStatus {
   running: boolean;
-  /** "walk_to", "dig" or "craft". */
+  /** "walk_to", "dig", "craft" or "attack". */
   name?: string;
   ticks?: number;
   [progress: string]: unknown;
@@ -290,6 +296,16 @@ export interface HitTarget {
   strength?: number;
 }
 
+/** The outcome of attack(); continuous attacks add the hit count and how they ended. */
+export interface AttackResult extends HitTarget {
+  /** Hits landed while attacking continuously. */
+  attacks?: number;
+  /** The target died during a continuous attack. */
+  killed?: boolean;
+  /** Why a continuous attack ended before the target died: "timeout", "damaged" or "out_of_reach". */
+  reason?: string;
+}
+
 export interface BlockInfo extends BlockPosition {
   /** false when the chunk is not loaded on the client. */
   loaded?: boolean;
@@ -305,6 +321,18 @@ export interface ItemInfo {
   name: string;
   damage?: number;
   maxDamage?: number;
+}
+
+/** One stack with the tooltip lines the client renders on hover. */
+export interface ItemDetails extends Partial<ItemInfo> {
+  /** The requested slot: an inventory slot, or a window slot when read from an open container. */
+  slot: number;
+  /** Inventory reads: the same slot in the open window, or null when the window does not show it. */
+  menuSlot?: number | null;
+  /** The slot is empty; the item fields and tooltip are then absent. */
+  empty?: boolean;
+  /** Hover lines: name, enchantments, lore, attributes, potion effects, ... */
+  tooltip?: string[];
 }
 
 export interface InventoryInfo {

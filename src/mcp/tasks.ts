@@ -11,8 +11,9 @@ interface Job {
 }
 
 /**
- * Long actions (walk_to, dig, craft) started with {@code background: true}. The probe runs one action per
- * client at a time, so only the latest job of each client is kept; its outcome stays readable after it ends.
+ * Long actions (walk_to, dig, craft, continuous attack) started with {@code background: true}. The probe runs one
+ * action per client at a time, so only the latest job of each client is kept; its outcome stays readable after it
+ * ends.
  */
 export class BackgroundTasks {
   private readonly jobs = new Map<string, Job>();

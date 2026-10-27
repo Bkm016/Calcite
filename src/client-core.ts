@@ -339,7 +339,8 @@ export abstract class ClientCore extends EventEmitter<ClientEvents> {
     // the game JVM only starts once HeadlessMC has downloaded and verified every asset
     if (this.game) void markAssetsVerified(this.paths, this.game.json).catch(() => undefined);
     if (this.phaseValue === 'starting' || this.phaseValue === 'reconnecting') this.setPhase('connecting');
-    run.poll(() => void this.poll(run), 1000);
+    // a fresh state stream lets agents steer in a closed loop instead of acting on second-old positions
+    run.poll(() => void this.poll(run), 250);
   }
 
   private async poll(run: GameRun): Promise<void> {

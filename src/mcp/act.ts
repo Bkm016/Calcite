@@ -117,7 +117,7 @@ export function registerActTools({ server, manager, tasks }: ToolContext): void 
     'stop_actions',
     {
       title: 'Stop actions',
-      description: 'Releases all keys and cancels the running walk_to, dig, craft or held use.',
+      description: 'Releases all keys and cancels the running walk_to, dig, craft, continuous attack or held use.',
       inputSchema: { client: clientName },
     },
     async ({ client }) => {
@@ -132,7 +132,7 @@ export function registerActTools({ server, manager, tasks }: ToolContext): void 
     {
       title: 'Running action',
       description:
-        'Progress of the running walk_to, dig or craft (waypoint, distance, crafted count...) and the outcome of the last one started with background: true.',
+        'Progress of the running walk_to, dig, craft or continuous attack (waypoint, distance, crafted count, hits...) and the outcome of the last one started with background: true.',
       inputSchema: {
         client: clientName,
         waitSeconds: z.number().min(0).max(120).default(0).describe('Wait up to this long for the background action to end'),
@@ -147,14 +147,25 @@ export function registerActTools({ server, manager, tasks }: ToolContext): void 
     {
       title: 'Attack (left click)',
       description:
-        'Attacks the entity with this id (from get_entities; the player turns to it, must be within reach) or, without an id, whatever the crosshair points at. Damage scales with the attack cooldown (strength in the result); by default it waits for a full cooldown first (charged false hits at once), so repeated hits really hurt.',
+        'Attacks the entity with this id (from get_entities; the player turns to it, must be within reach) or, without an id, whatever the crosshair points at. Damage scales with the attack cooldown (strength in the result); by default it waits for a full cooldown first (charged false hits at once), so repeated hits really hurt. With entityId and seconds it keeps attacking like a player: the view follows the moving target, every hit is fully charged, and it ends when the target dies (killed true) or gets more than 6 blocks away (reason out_of_reach); use background to follow it with get_task.',
       inputSchema: {
         client: clientName,
         entityId: z.number().int().optional(),
         charged: z.boolean().optional().describe('Wait for the attack cooldown to fill before hitting (default true)'),
+        seconds: z
+          .number()
+          .positive()
+          .max(600)
+          .optional()
+          .describe('Keep attacking this entity for up to this many seconds instead of clicking once (needs entityId)'),
+        stopOnDamage,
+        background,
       },
     },
-    async ({ client, entityId, charged }) => manager.resolve(client).attack(entityId, { charged }),
+    async ({ client, entityId, charged, seconds, stopOnDamage: stop, background: bg }) => {
+      const target = manager.resolve(client);
+      return tasks.run(target, 'attack', bg, () => target.attack(entityId, { charged, seconds, stopOnDamage: stop }));
+    },
   );
 
   tool(

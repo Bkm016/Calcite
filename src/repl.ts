@@ -105,7 +105,11 @@ const COMMANDS: Record<string, ReplCommand> = {
   },
   stop: { help: 'release keys, cancel the running action', run: (c) => c.stopActions() },
   task: { help: 'the running action', run: (c) => c.task() },
-  attack: { args: '[entity id]', help: 'left click', run: (c, [id]) => c.attack(optionalNumber(id)) },
+  attack: {
+    args: '[entity id] [seconds]',
+    help: 'left click (with seconds: keep hitting that entity)',
+    run: (c, [id, seconds]) => c.attack(optionalNumber(id), { seconds: optionalNumber(seconds) }),
+  },
   use: {
     args: '[entity id | x y z] [hold ticks]',
     help: 'right click',
@@ -126,6 +130,11 @@ const COMMANDS: Record<string, ReplCommand> = {
   },
   target: { help: 'what the crosshair points at', run: (c) => c.target() },
   inv: { help: 'inventory', run: (c) => c.inventory() },
+  item: {
+    args: '[slot]',
+    help: 'item details and tooltip (no slot = the held item)',
+    run: (c, [slot]) => c.item(optionalNumber(slot)),
+  },
   slot: { args: '<0-8>', help: 'select a hotbar slot', run: (c, args) => c.selectSlot(num(args, 0, 'slot')) },
   craft: {
     args: '<item> [count]',

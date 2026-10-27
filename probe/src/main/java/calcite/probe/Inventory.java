@@ -22,6 +22,7 @@ final class Inventory implements Ops.Module {
     @Override
     public void register(Ops ops) {
         ops.add("inventory", a -> game.withPlayer((mc, player) -> inventory(player)));
+        ops.add("item", a -> game.withPlayer((mc, player) -> item(mc, player, a.optInt("slot"), a.flag("inventory", true))));
         ops.add("select_slot", a -> selectSlot(a.integer("slot", -1)));
         ops.add("container", a -> container(a.millis("waitMs", 0)));
         ops.add("click", a -> click(a.integer("slot", -1000), a.integer("button", 0), a.str("mode", "pickup"), a.flag("inventory", false)));
@@ -49,6 +50,44 @@ final class Inventory implements Ops.Module {
         out.put("items", items);
         out.put("slots", "slot: 0-8 hotbar, 9-35 main, 36-39 armor (feet..head), 40 offhand; menuSlot is the number click() takes"
                 + " (or click(slot, {inventory: true}) with slot)");
+        return out;
+    }
+
+    /**
+     * One stack and the lines the client would show on hover. {@code slot} is an inventory slot
+     * (0-8 hotbar, 9-35 main, 36-39 armor, 40 offhand; default: the selected one) or, with
+     * {@code inventory} false, a slot of the open window, like {@code click}.
+     */
+    private Map<String, Object> item(Object mc, Object player, Integer requested, boolean inventory) throws Exception {
+        Object menu = menus.menu(player);
+        Object inv = menus.playerInventory(player);
+        int slot = requested == null ? menus.selectedSlot(inv) : requested;
+        Object stack;
+        if (inventory) {
+            if (slot < 0 || slot >= menus.size(inv)) {
+                throw new ProbeException("bad_request", "Inventory slot must be 0-" + (menus.size(inv) - 1));
+            }
+            stack = menus.stackAt(inv, slot);
+        } else {
+            List<?> slots = menus.slots(menu);
+            if (slot < 0 || slot >= slots.size()) {
+                throw new ProbeException("bad_request", "Slot must be 0-" + (slots.size() - 1));
+            }
+            stack = menus.slotStack(slots.get(slot));
+        }
+        Map<String, Object> out = new LinkedHashMap<String, Object>();
+        out.put("slot", slot);
+        if (inventory) {
+            int menuSlot = menus.menuSlotOf(menu, inv, slot);
+            out.put("menuSlot", menuSlot < 0 ? null : menuSlot);
+        }
+        Map<String, Object> details = menus.item(stack);
+        if (details == null) {
+            out.put("empty", true);
+            return out;
+        }
+        out.putAll(details);
+        out.put("tooltip", menus.tooltip(mc, player, stack));
         return out;
     }
 

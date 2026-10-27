@@ -3,6 +3,7 @@ import { ClientCore, sleep } from './client-core.js';
 import { ProbeError } from './probe-server.js';
 import {
   CalciteError,
+  type AttackResult,
   type BlockFace,
   type BlockInfo,
   type BlockPosition,
@@ -21,6 +22,7 @@ import {
   type GameState,
   type HitTarget,
   type InventoryInfo,
+  type ItemDetails,
   type ItemInfo,
   type LogLine,
   type MoveControls,
@@ -41,8 +43,9 @@ export { installVersion, type InstallOptions } from './install.js';
  * Events: 'phase' (Phase), 'log' (LogLine), 'chat' (ChatLine), 'state' (GameState), 'event' (GameEvent),
  * 'exit' (code).
  *
- * Long actions ({@link walkTo}, {@link dig}, {@link craft}) run one at a time: starting another, or
- * {@link stopActions}, cancels the running one, whose promise then rejects with code "cancelled".
+ * Long actions ({@link walkTo}, {@link dig}, {@link craft}, a continuous {@link attack}) run one at a time:
+ * starting another, or {@link stopActions}, cancels the running one, whose promise then rejects with code
+ * "cancelled".
  */
 export class Client extends ClientCore {
   async state(): Promise<GameState> {
@@ -131,13 +134,31 @@ export class Client extends ClientCore {
    * proportion to the attack cooldown (the result's {@code strength}, 0 to 1), so hitting in a tight loop barely
    * hurts, so by default ({@code charged}) it first waits (up to {@code timeoutMs}, default 2 s) until the cooldown is
    * full; pass {@code charged: false} for an immediate click.
+   *
+   * With {@code seconds} and an entity, keeps hitting it like a player would: the view follows it and every hit
+   * lands at full strength, until it dies, walks more than 6 blocks away ({@code out_of_reach}) or the time is up.
+   * Hit it while it is moving instead of calling attack() in a loop; use {@code background} on the MCP tool to
+   * follow it with get_task.
    */
-  async attack(entityId?: number, opts: { charged?: boolean; timeoutMs?: number } = {}): Promise<HitTarget> {
-    const { charged = true, timeoutMs = 2000 } = opts;
+  async attack(
+    entityId?: number,
+    opts: { charged?: boolean; timeoutMs?: number; seconds?: number; stopOnDamage?: boolean } = {},
+  ): Promise<AttackResult> {
+    const { charged = true, timeoutMs = 2000, seconds, stopOnDamage = false } = opts;
+    if (seconds !== undefined && !(seconds > 0)) throw new CalciteError('bad_request', 'attack: seconds must be positive');
+    if (seconds !== undefined && entityId === undefined)
+      throw new CalciteError('bad_request', 'attack: seconds needs an entityId to keep hitting');
+    const ticks = seconds === undefined ? 0 : Math.max(1, Math.round(seconds * 20));
     return this.requireProbe().request(
       'attack',
-      { ...(entityId === undefined ? {} : { entityId }), charged, timeoutMs },
-      timeoutMs + 15_000,
+      {
+        ...(entityId === undefined ? {} : { entityId }),
+        charged,
+        timeoutMs,
+        ...(ticks ? { ticks } : {}),
+        stopOnDamage,
+      },
+      seconds === undefined ? timeoutMs + 15_000 : seconds * 1000 + 15_000,
     );
   }
 
@@ -189,6 +210,18 @@ export class Client extends ClientCore {
 
   async inventory(): Promise<InventoryInfo> {
     return this.requireProbe().request('inventory');
+  }
+
+  /**
+   * One stack with the tooltip lines the client shows on hover: enchantments, lore, attributes, potion
+   * effects, ... Without a slot it reads the held hotbar item; with {@code inventory: false} it reads a
+   * window slot of the open container instead (an item's {@code menuSlot}).
+   */
+  async item(slot?: number, opts: { inventory?: boolean } = {}): Promise<ItemDetails> {
+    return this.requireProbe().request('item', {
+      ...(slot === undefined ? {} : { slot }),
+      inventory: opts.inventory ?? true,
+    });
   }
 
   /** Selects hotbar slot 0-8. */
@@ -346,7 +379,7 @@ export class Client extends ClientCore {
       }
       if (Date.now() > deadline) throw new CalciteError('timeout', `Condition not met within ${timeoutMs}ms`);
       if (['stopped', 'crashed'].includes(this.phase)) throw new CalciteError('not_running', `Client stopped (phase ${this.phase})`);
-      await sleep(300);
+      await sleep(150);
     }
   }
 }
