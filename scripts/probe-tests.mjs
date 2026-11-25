@@ -8,14 +8,28 @@ import { JAVAC_OPTIONS, jdkTool, listJava } from './build-probe.mjs';
 
 const JUNIT_VERSION = '1.14.4';
 const JUNIT_SHA1 = '02deb74daae8c2187cfc9fe85392f8421eb004c6';
-const JUNIT_URL = `https://repo1.maven.org/maven2/org/junit/platform/junit-platform-console-standalone/${JUNIT_VERSION}/junit-platform-console-standalone-${JUNIT_VERSION}.jar`;
+const JUNIT_PATH = `org/junit/platform/junit-platform-console-standalone/${JUNIT_VERSION}/junit-platform-console-standalone-${JUNIT_VERSION}.jar`;
+const JUNIT_URLS = [
+  `https://repo1.maven.org/maven2/${JUNIT_PATH}`,
+  `https://maven-central.storage-download.googleapis.com/maven2/${JUNIT_PATH}`,
+];
+
+async function downloadJunit(dest) {
+  let lastErr;
+  for (const url of JUNIT_URLS) {
+    try {
+      return await download(url, dest, { sha1: JUNIT_SHA1 });
+    } catch (err) {
+      lastErr = err;
+    }
+  }
+  throw lastErr;
+}
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const build = join(root, 'probe', 'build');
 const out = join(build, 'test-classes');
-const junit = await download(JUNIT_URL, join(build, 'junit', `junit-platform-console-standalone-${JUNIT_VERSION}.jar`), {
-  sha1: JUNIT_SHA1,
-});
+const junit = await downloadJunit(join(build, 'junit', `junit-platform-console-standalone-${JUNIT_VERSION}.jar`));
 
 rmSync(out, { recursive: true, force: true });
 mkdirSync(out, { recursive: true });
