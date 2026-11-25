@@ -7,10 +7,17 @@
 - 持续攻击：`attack(entityId, { seconds })`（MCP `attack` 的 `seconds`、交互模式 `:attack <实体ID> <秒数>`）按攻击冷却连续出手，视线平滑跟随移动目标，目标死亡时结果带 `killed: true` 与 `attacks`，离开 6 格时以 `reason: "out_of_reach"` 结束；可传 `stopOnDamage`，也可作为后台任务运行。此前只能反复调用 `attack`，每次都要重新转身，移动目标很容易脱靶。
 - `state()` 的玩家带 `vx`/`vy`/`vz`（每 tick 位移）、`onGround` 与 `inWater`；客户端状态流刷新间隔由 1 秒缩短到 250 毫秒，闭环控制不再基于一秒前的坐标。
 - `item(slot?, { inventory })`（MCP `get_item`、交互模式 `:item [槽位]`）：读取单个物品并附上客户端悬停时显示的提示行（名称、附魔、词缀、属性、药水效果等）；省略槽位时为手持物品，`inventory: false` 时按容器窗口槽位读取。此前只能看到物品 ID、数量、名称与耐久，无法判断附魔或药水效果。
+- 原生视频录制（Linux X11/Xvfb + ffmpeg）：`startRecording` / `stopRecording` / `recording` / `recordClip`（MCP `start_recording` / `stop_recording` / `record_clip`、交互模式 `:record start|stop|status|clip`），自动裁切游戏窗口、按需切换并在停录或客户端关闭时还原渲染状态与写完 MP4 `moov` 头。
+- X11 窗口键鼠交互与平滑运镜：`focusWindow`、`mouseMove`、`mouseClick`、`keyPress`、`panLook`（MCP `focus_window` / `mouse_move` / `mouse_click` / `key_press` / `pan_look`、交互模式 `:focus` / `:mouse` / `:mclick` / `:key` / `:pan`），支持自定义 Dialog 等非容器 GUI 操作。
+- 声明式 JSON 分镜编排：`runStoryboard`（MCP `record_storyboard`、交互模式 `:record run <script.json>`），支持 `setup → startRecording → steps → stopRecording → teardown` 全链路自动化录制与 `dryRun` 演练。
 
 ### 变更
 
 - `walk_to` 不再瞬间转身：每 tick 最多转向 20°，背对目标时先原地转身再前进，接近路点时松开前进键以免冲过头，疾跑只在朝向基本一致且距目标足够远时启用。
+
+### 修复
+
+- `defaultOptions` 增设 `inactivityFpsLimit: '"none"'`，避免 1.21.2+ 窗口未聚焦时被限帧；`Xvfb` 启动补充 `-noreset`，防止无持久 X11 客户端间隙重置屏幕与光标状态；`ProbeServer` 监听 `readline` `error` 事件，防止重连瞬间 `ECONNRESET` 触发未捕获异常。
 
 ## 0.5.4
 
