@@ -32,7 +32,7 @@ Events: get_events and wait_for {event} report world.join, player.hurt, player.d
 
 Accounts: offline accounts need no login. For premium servers call account_login_start, show the URL to the user, then poll account_login_status.
 
-Screenshots need render "on-demand" (default) or "always". Mods: launch_client with loader "fabric", "forge" or "neoforge" and mods such as "modrinth:fabric-api". Extensions (probe jars) add commands: list_extensions, call_extension.`;
+Screenshots and video recordings (start_recording, stop_recording, record_clip, record_storyboard) plus window GUI input (focus_window, mouse_move, mouse_click, key_press, pan_look) need render "on-demand" (default) or "always". Mods: launch_client with loader "fabric", "forge" or "neoforge" and mods such as "modrinth:fabric-api". Extensions (probe jars) add commands: list_extensions, call_extension.`;
 
 export function createMcpServer(opts: McpOptions = {}): { server: McpServer; manager: ClientManager } {
   const server = new McpServer({ name: 'calcite', version: VERSION }, { instructions: INSTRUCTIONS });

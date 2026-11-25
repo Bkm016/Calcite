@@ -107,7 +107,7 @@ async function startXvfb(width: number, height: number): Promise<{ proc: ChildPr
   for (let attempt = 0; attempt < 5; attempt++) {
     const n = freeDisplayNumber(tried);
     tried.add(n);
-    const proc = spawn(xvfb, [`:${n}`, '-screen', '0', `${width}x${height}x24`, '-nolisten', 'tcp'], { stdio: 'ignore' });
+    const proc = spawn(xvfb, [`:${n}`, '-screen', '0', `${width}x${height}x24`, '-nolisten', 'tcp', '-noreset'], { stdio: 'ignore' });
     proc.unref();
     const socket = `/tmp/.X11-unix/X${n}`;
     await waitFor(() => existsSync(socket) || proc.exitCode !== null, 10_000);

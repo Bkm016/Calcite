@@ -469,10 +469,28 @@ export abstract class ClientCore extends EventEmitter<ClientEvents> {
   }
 
   private async cleanupRun(): Promise<void> {
+    await this.beforeCleanup();
     const run = this.current;
     this.current = null;
     this.lastState = undefined;
     await run?.dispose();
+  }
+
+  /** Subclass hook executed before tearing down the current game process and display. */
+  protected async beforeCleanup(): Promise<void> {
+    // no-op by default
+  }
+
+  /** X11 display currently attached to the running game, if any. */
+  protected get displayName(): string | undefined {
+    const lease = this.current?.display;
+    if (!lease) return undefined;
+    return lease.env.DISPLAY || process.env.DISPLAY || undefined;
+  }
+
+  /** Subclass hook for reporting active recording metadata in {@link status}. */
+  protected activeRecording(): ClientStatus['recording'] {
+    return undefined;
   }
 
   private async shutdown(final: Phase): Promise<void> {
@@ -514,6 +532,8 @@ export abstract class ClientCore extends EventEmitter<ClientEvents> {
       phase: this.phaseValue,
       render: this.render,
       headless: this.headlessValue,
+      display: this.displayName,
+      recording: this.activeRecording(),
       account: this.account,
       server: this.server,
       world: this.world,

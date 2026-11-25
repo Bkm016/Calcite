@@ -1,4 +1,7 @@
 export { Client, CalciteError, installVersion, parseServer, parseWorld } from './client.js';
+export { VideoRecorder } from './recorder.js';
+export { executeStoryboard, loadStoryboardFile, validateStoryboard } from './storyboard.js';
+export { WindowInput } from './window-input.js';
 export type {
   Account,
   BlockFace,
@@ -27,13 +30,26 @@ export type {
   InstallOptions,
   InventoryInfo,
   ItemInfo,
+  KeyPressOptions,
   LogLine,
+  MouseClickOptions,
+  MouseMoveOptions,
+  MouseSpace,
   MoveControls,
   NearbyEntity,
+  PanLookOptions,
   Phase,
   PlayerState,
+  RecordOptions,
+  RecordingRegion,
+  RecordingResult,
+  RecordingStatus,
   RenderMode,
   ServerAddress,
+  Storyboard,
+  StoryboardResult,
+  StoryboardRunOptions,
+  StoryboardStep,
   Surroundings,
   TaskStatus,
   TransferResult,

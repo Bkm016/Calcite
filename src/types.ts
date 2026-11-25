@@ -405,6 +405,163 @@ export interface EntityQuery {
   includeSelf?: boolean;
 }
 
+export interface RecordingRegion {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  fullScreen?: boolean;
+  /** X11 window id when matched to a specific client window (e.g. "0x400005"). */
+  windowId?: string;
+}
+
+export type MouseSpace = 'window' | 'norm' | 'root';
+
+export interface MouseMoveOptions {
+  /** Smooth move duration in milliseconds (default 0 = instant). */
+  durationMs?: number;
+  /** Explicit interpolation step count when durationMs > 0. */
+  steps?: number;
+  /** Coordinate space: "window" (client pixels, default), "norm" (0..1), or "root" (X11 screen). */
+  space?: MouseSpace;
+}
+
+export interface MouseClickOptions extends MouseMoveOptions {
+  /** Optional target X coordinate; omits move when absent. */
+  x?: number;
+  /** Optional target Y coordinate; omits move when absent. */
+  y?: number;
+  /** X11 mouse button: 1 = left (default), 2 = middle, 3 = right. */
+  button?: number;
+  /** Hold duration in milliseconds between mousedown and mouseup (default 40). */
+  holdMs?: number;
+}
+
+export interface KeyPressOptions {
+  /** Repeat count (default 1). */
+  repeat?: number;
+  /** Delay between repeats in milliseconds (default 100). */
+  delayMs?: number;
+}
+
+export interface PanLookOptions {
+  /** Target absolute yaw (degrees); interpolated along the shortest arc. */
+  yaw?: number;
+  /** Target absolute pitch (degrees, clamped to [-90, 90]). */
+  pitch?: number;
+  /** Relative yaw delta (degrees); overrides {@link yaw} when provided. */
+  dyaw?: number;
+  /** Relative pitch delta (degrees); overrides {@link pitch} when provided. */
+  dpitch?: number;
+  /** Smooth pan duration in milliseconds (default 1000). */
+  durationMs?: number;
+  /** Explicit step count; defaults to ~30-60 Hz over durationMs. */
+  steps?: number;
+}
+
+export interface StoryboardStep {
+  note?: string;
+  /** Seconds to wait. */
+  wait?: number;
+  /** One or more REPL / command / chat lines (e.g. "/tp ...", ":look 0 -90", ":close"). */
+  exec?: string | string[];
+  /** Focus the Minecraft window before interacting. */
+  focus?: boolean;
+  move?: { x: number; y: number; duration?: number; steps?: number; space?: MouseSpace };
+  click?:
+    | boolean
+    | {
+        x?: number;
+        y?: number;
+        button?: number;
+        duration?: number;
+        steps?: number;
+        hold?: number;
+        space?: MouseSpace;
+      };
+  key?: string | { key: string; repeat?: number; delay?: number };
+  pan?: { yaw?: number; pitch?: number; dyaw?: number; dpitch?: number; duration?: number; steps?: number };
+  /** Take a screenshot and write the PNG to this path. */
+  shot?: string;
+}
+
+export interface Storyboard {
+  name?: string;
+  description?: string;
+  output?: string;
+  fps?: number;
+  crf?: number;
+  cursor?: boolean;
+  fullScreen?: boolean;
+  /** Seconds to record before running {@link steps} (default 0.3). */
+  preroll?: number;
+  /** Seconds to record after {@link steps} finish (default 0.5). */
+  postroll?: number;
+  /** Steps run before recording starts. */
+  setup?: StoryboardStep[];
+  /** Steps run while recording. */
+  steps: StoryboardStep[];
+  /** Best-effort cleanup steps run after recording stops. */
+  teardown?: StoryboardStep[];
+}
+
+export interface StoryboardRunOptions {
+  output?: string;
+  fps?: number;
+  crf?: number;
+  cursor?: boolean;
+  fullScreen?: boolean;
+  /** Validate and log steps without recording or interacting with the client. */
+  dryRun?: boolean;
+  onLog?: (line: string) => void;
+}
+
+export interface StoryboardResult {
+  recording?: RecordingResult;
+  shots: string[];
+  stepsExecuted: number;
+  dryRun: boolean;
+}
+
+export interface RecordOptions {
+  /** Output video path (default: <gameDir>/recordings/calcite-<timestamp>.mp4). */
+  output?: string;
+  /** Target frames per second, 1-120 (default 30). */
+  fps?: number;
+  /** H.264 CRF quality 0-51; lower is sharper (default 20). */
+  crf?: number;
+  /** Draw the X11 mouse cursor in the video (default true). */
+  cursor?: boolean;
+  /** Capture the full X11 display instead of cropping to the Minecraft window (default false). */
+  fullScreen?: boolean;
+  /** Optional libx264 preset override (default: "ultrafast" for >= 45fps, else "veryfast"). */
+  preset?: string;
+  /** Milliseconds to wait after enabling on-demand rendering before spawning ffmpeg (default 250). */
+  warmupMs?: number;
+}
+
+export interface RecordingStatus {
+  output: string;
+  pid: number;
+  fps: number;
+  crf: number;
+  cursor: boolean;
+  display: string;
+  region: RecordingRegion;
+  startedAt: number;
+  elapsedMs: number;
+}
+
+export interface RecordingResult {
+  path: string;
+  durationMs: number;
+  fps?: number;
+  frames?: number;
+  width?: number;
+  height?: number;
+  bytes?: number;
+}
+
 export interface ClientStatus {
   name: string;
   version: string;
@@ -417,6 +574,10 @@ export interface ClientStatus {
   phase: Phase;
   render: RenderMode;
   headless: boolean;
+  /** X11 display attached to this client when rendering on Linux. */
+  display?: string;
+  /** Active video recording, if one is in progress. */
+  recording?: RecordingStatus;
   account: Account;
   server?: ServerAddress;
   world?: WorldOptions;

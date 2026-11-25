@@ -1,6 +1,9 @@
 import { readFile, rm } from 'node:fs/promises';
 import { ClientCore, sleep } from './client-core.js';
 import { ProbeError } from './probe-server.js';
+import { VideoRecorder } from './recorder.js';
+import { executeStoryboard } from './storyboard.js';
+import { WindowInput } from './window-input.js';
 import {
   CalciteError,
   type AttackResult,
@@ -24,9 +27,19 @@ import {
   type InventoryInfo,
   type ItemDetails,
   type ItemInfo,
+  type KeyPressOptions,
   type LogLine,
+  type MouseClickOptions,
+  type MouseMoveOptions,
   type MoveControls,
+  type PanLookOptions,
   type Phase,
+  type RecordOptions,
+  type RecordingResult,
+  type RecordingStatus,
+  type Storyboard,
+  type StoryboardResult,
+  type StoryboardRunOptions,
   type Surroundings,
   type TaskStatus,
   type TransferResult,
@@ -290,6 +303,144 @@ export class Client extends ClientCore {
     if (keep) return { path, png };
     await rm(path, { force: true });
     return { png };
+  }
+
+  private recorderInstance: VideoRecorder | null = null;
+  private windowInputInstance: WindowInput | null = null;
+
+  private get recorder(): VideoRecorder {
+    this.recorderInstance ??= new VideoRecorder({
+      gameDir: this.gameDir,
+      getDisplay: () => this.displayName,
+      isHeadless: () => this.headless,
+      isRenderDisabled: async () => {
+        try {
+          const live = await this.state();
+          return live.noRender === true;
+        } catch {
+          return this.lastState?.noRender === true;
+        }
+      },
+      setRender: (enabled) => this.setRender(enabled),
+    });
+    return this.recorderInstance;
+  }
+
+  private get windowInput(): WindowInput {
+    this.windowInputInstance ??= new WindowInput({
+      getDisplay: () => this.displayName,
+      isHeadless: () => this.headless,
+      getCachedRegion: () => this.recorderInstance?.status()?.region,
+      getRotation: async () => {
+        const s = await this.state();
+        return { yaw: s.player?.yaw ?? 0, pitch: s.player?.pitch ?? 0 };
+      },
+      setRotation: (rot) => this.look(rot),
+    });
+    return this.windowInputInstance;
+  }
+
+  protected override async beforeCleanup(): Promise<void> {
+    await this.recorderInstance?.stopIfActive();
+    this.windowInputInstance?.reset();
+  }
+
+  protected override activeRecording(): RecordingStatus | undefined {
+    return this.recorderInstance?.status() ?? undefined;
+  }
+
+  /** Returns the active video recording status, or null when not recording. */
+  recording(): RecordingStatus | null {
+    return this.recorderInstance?.status() ?? null;
+  }
+
+  /**
+   * Starts recording the client window to an MP4 file (Linux X11/Xvfb with ffmpeg).
+   * Temporarily turns rendering on when the client is in "on-demand" mode and restores it on {@link stopRecording}.
+   */
+  async startRecording(opts: RecordOptions = {}): Promise<RecordingStatus> {
+    if (this.phaseValue === 'idle' || this.phaseValue === 'stopped') {
+      throw new CalciteError('not_running', `Client "${this.options.name}" is not running (phase ${this.phaseValue})`);
+    }
+    return this.recorder.start(opts);
+  }
+
+  /** Stops the active video recording, finalizes the MP4 container, and returns metadata. */
+  async stopRecording(): Promise<RecordingResult> {
+    return this.recorder.stop();
+  }
+
+  /** Records a fixed-length MP4 clip of {@code durationMs} milliseconds. */
+  async recordClip(durationMs: number, opts: RecordOptions = {}): Promise<RecordingResult> {
+    if (!Number.isFinite(durationMs) || durationMs <= 0) {
+      throw new CalciteError('bad_request', `durationMs must be a positive number (got ${durationMs})`);
+    }
+    await this.startRecording(opts);
+    try {
+      await sleep(durationMs);
+      return await this.stopRecording();
+    } catch (err) {
+      await this.recorder.stopIfActive();
+      throw err;
+    }
+  }
+
+  /** Focuses the Minecraft X11 window (Linux X11/Xvfb with xdotool). */
+  async focusWindow(): Promise<void> {
+    if (this.phaseValue === 'idle' || this.phaseValue === 'stopped') {
+      throw new CalciteError('not_running', `Client "${this.options.name}" is not running (phase ${this.phaseValue})`);
+    }
+    await this.windowInput.focus();
+  }
+
+  /** Moves the X11 mouse cursor over the client window (optional smooth cubic easing). */
+  async mouseMove(x: number, y: number, opts: MouseMoveOptions = {}): Promise<void> {
+    if (this.phaseValue === 'idle' || this.phaseValue === 'stopped') {
+      throw new CalciteError('not_running', `Client "${this.options.name}" is not running (phase ${this.phaseValue})`);
+    }
+    await this.windowInput.mouseMove(x, y, opts);
+  }
+
+  /** Clicks an X11 mouse button (1 = left, 2 = middle, 3 = right), optionally moving to (x, y) first. */
+  async mouseClick(opts: MouseClickOptions = {}): Promise<void> {
+    if (this.phaseValue === 'idle' || this.phaseValue === 'stopped') {
+      throw new CalciteError('not_running', `Client "${this.options.name}" is not running (phase ${this.phaseValue})`);
+    }
+    await this.windowInput.mouseClick(opts);
+  }
+
+  /** Sends one or more X11 key presses to the client window (e.g. "Escape", "Return", "F3+t"). */
+  async keyPress(key: string, opts: KeyPressOptions = {}): Promise<void> {
+    if (this.phaseValue === 'idle' || this.phaseValue === 'stopped') {
+      throw new CalciteError('not_running', `Client "${this.options.name}" is not running (phase ${this.phaseValue})`);
+    }
+    await this.windowInput.keyPress(key, opts);
+  }
+
+  /** Smoothly pans the player's camera rotation with cubic ease-in-out. */
+  async panLook(opts: PanLookOptions): Promise<{ yaw: number; pitch: number }> {
+    return this.windowInput.panLook(opts);
+  }
+
+  /** Executes a declarative JSON storyboard (from an object or a JSON file path) while recording video. */
+  async runStoryboard(source: Storyboard | string, opts: StoryboardRunOptions = {}): Promise<StoryboardResult> {
+    const { execute } = await import('./repl.js');
+    return executeStoryboard(
+      {
+        executeLine: (line) => execute(this, line),
+        startRecording: (recOpts) => this.startRecording(recOpts),
+        stopRecording: () => this.stopRecording(),
+        recording: () => this.recording(),
+        focusWindow: () => this.focusWindow(),
+        mouseMove: (x, y, moveOpts) => this.mouseMove(x, y, moveOpts),
+        mouseClick: (clickOpts) => this.mouseClick(clickOpts),
+        keyPress: (key, keyOpts) => this.keyPress(key, keyOpts),
+        panLook: (panOpts) => this.panLook(panOpts),
+        screenshot: () => this.screenshot(),
+      },
+      source,
+      opts,
+    );
   }
 
   logsSince(opts: { since?: number; limit?: number; contains?: string; source?: LogLine['source'] } = {}): LogLine[] {

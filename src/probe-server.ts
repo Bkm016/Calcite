@@ -73,6 +73,7 @@ export class ProbeServer extends EventEmitter<ProbeServerEvents> {
       if (!authed) socket.destroy();
     }, 10_000);
     const rl = createInterface({ input: socket });
+    rl.on('error', () => undefined);
     rl.on('line', (line) => {
       let msg: Record<string, unknown>;
       try {

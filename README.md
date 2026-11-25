@@ -98,6 +98,9 @@ calcite launch play.example.com -V 1.21.11 -n Bot1
 | `:ents [半径]` | 列出附近实体，默认半径 32 |
 | `:shot [文件]` | 截图并保存为 PNG |
 | `:render on\|off` | 开启或关闭持续渲染 |
+| `:record start [文件] [fps] [crf]` / `stop` / `status` / `clip <秒> [文件] [fps]` / `run <分镜.json> [文件] [fps]` | 录制游戏窗口视频或执行 JSON 分镜脚本（MP4，Linux X11/Xvfb + ffmpeg） |
+| `:focus` / `:mouse <x> <y> [秒]` / `:mclick [x y] [键]` / `:key <键> [次数]` | 聚焦窗口、移动/点击 X11 鼠标、发送按键（用于 Dialog 等非容器界面，需 xdotool） |
+| `:pan <dyaw> <dpitch> [秒]` | 平滑缓动旋转镜头 |
 | `:respawn` | 死亡后重生 |
 | `:look <yaw> <pitch>` / `:lookat <x> <y> <z>` | 设置视角 / 看向坐标 |
 | `:around [半径]` | 周边俯视地图、附近方块统计与实体 |
@@ -212,6 +215,12 @@ claude mcp add calcite -- npx -y @bkm016/calcite mcp
 | `get_chat` | 获取聊天记录 |
 | `get_logs` | 获取游戏日志与 Calcite 日志，用于排查崩溃 |
 | `set_render` | 开启或关闭持续渲染 |
+| `start_recording` | 开始录制游戏窗口 MP4 视频（Linux X11/Xvfb + ffmpeg），自动开启渲染 |
+| `stop_recording` | 停止当前视频录制并收尾 MP4，返回路径、分辨率、帧数与时长 |
+| `record_clip` | 录制指定秒数的游戏窗口 MP4 片段并返回元数据 |
+| `record_storyboard` | 执行声明式 JSON 分镜脚本（`setup → 录屏 → steps → 停录 → teardown`） |
+| `focus_window` / `mouse_move` / `mouse_click` / `key_press` | 聚焦游戏窗口、平滑移动/点击 X11 鼠标、发送按键（适用于自定义 Dialog/按钮界面，需 xdotool） |
+| `pan_look` | 平滑缓动旋转玩家镜头（绝对或相对角度） |
 | `respawn` | 死亡后重生 |
 | `look` | 设置视角，或看向指定坐标 |
 | `walk_to` | A* 寻路走到指定坐标（平滑转向、到达前减速），返回是否到达及失败原因（`no_path`、`stuck`、`off_path`、`timeout`、`damaged`） |
@@ -303,6 +312,8 @@ await bot.stop();
 | `entities(query)` | 实体列表，`query` 支持 `radius`、`type`、`name`、`uuid`、`limit` |
 | `chat(text)` / `command(cmd)` | 发送聊天 / 执行指令 |
 | `screenshot({ keep })` | 返回 `{ png, path? }` |
+| `startRecording(opts)` / `stopRecording()` / `recording()` / `recordClip(ms, opts)` / `runStoryboard(sb, opts)` | 录制游戏窗口 MP4 或执行声明式 JSON 分镜（Linux X11/Xvfb + ffmpeg），退出时自动收尾 |
+| `focusWindow()` / `mouseMove(x, y, opts)` / `mouseClick(opts)` / `keyPress(key, opts)` / `panLook(opts)` | 窗口聚焦、X11 键鼠交互（需 xdotool）与平滑运镜 |
 | `waitFor(cond, timeoutMs)` | 等待聊天、实体、方块（`{ block: { x, y, z, id } }`，服务端 `setblock` 之后客户端要稍后才看到）、阶段条件或扩展事件（`{ event: '正则' }`） |
 | `setRender(enabled)` / `respawn()` | 切换持续渲染 / 重生 |
 | `chatSince(seq)` / `logsSince(opts)` | 读取聊天与日志缓冲 |

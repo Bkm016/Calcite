@@ -37,6 +37,16 @@ test('commands parse their arguments', async () => {
   await execute(client, ':move forward,jump 5');
   await execute(client, ':transfer oak_log 3 inventory');
   await execute(client, ':call ext:hello {"name": "a b"}');
+  await execute(client, ':record start /tmp/demo.mp4 60 18');
+  await execute(client, ':record status');
+  await execute(client, ':record stop');
+  await execute(client, ':record clip 2.5 /tmp/clip.mp4 30');
+  await execute(client, ':record run /tmp/story.json /tmp/out.mp4 60');
+  await execute(client, ':focus');
+  await execute(client, ':mouse 426 158 0.4');
+  await execute(client, ':mclick 530 316 3');
+  await execute(client, ':key Escape 2');
+  await execute(client, ':pan 45 -10 0.5');
   assert.deepEqual(calls, [
     ['walkTo', 10, -20, { y: undefined }],
     ['look', { x: 1, y: 2, z: 3 }],
@@ -44,6 +54,16 @@ test('commands parse their arguments', async () => {
     ['move', { forward: true, jump: true }, { ticks: 5 }],
     ['transfer', 'oak_log', { count: 3, to: 'inventory' }],
     ['call', 'ext:hello', { name: 'a b' }],
+    ['startRecording', { output: '/tmp/demo.mp4', fps: 60, crf: 18 }],
+    ['recording'],
+    ['stopRecording'],
+    ['recordClip', 2500, { output: '/tmp/clip.mp4', fps: 30 }],
+    ['runStoryboard', '/tmp/story.json', { output: '/tmp/out.mp4', fps: 60 }],
+    ['focusWindow'],
+    ['mouseMove', 426, 158, { durationMs: 400 }],
+    ['mouseClick', { x: 530, y: 316, button: 3 }],
+    ['keyPress', 'Escape', { repeat: 2 }],
+    ['panLook', { dyaw: 45, dpitch: -10, durationMs: 500 }],
   ]);
 });
 

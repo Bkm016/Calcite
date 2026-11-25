@@ -19,5 +19,6 @@ test('options merge keeps user keys and overrides managed ones', async (t) => {
 
 test('defaultOptions sets the game language only when asked', () => {
   assert.equal(defaultOptions().lang, undefined);
+  assert.equal(defaultOptions().inactivityFpsLimit, '"none"');
   assert.equal(defaultOptions({ language: 'zh_CN' }).lang, 'zh_cn');
 });

@@ -73,6 +73,86 @@ const COMMANDS: Record<string, ReplCommand> = {
     },
   },
   render: { args: 'on|off', help: 'continuous rendering', run: (c, [mode]) => c.setRender(mode === 'on') },
+  record: {
+    args: 'start [file] [fps] [crf] | stop | status | clip <seconds> [file] [fps] | run <script.json> [file] [fps]',
+    help: 'record video of the client window or run a JSON storyboard (MP4)',
+    run: (c, [action, a1, a2, a3]) => {
+      switch (action) {
+        case 'start':
+          return c.startRecording({
+            output: a1,
+            fps: optionalNumber(a2),
+            crf: optionalNumber(a3),
+          });
+        case 'stop':
+          return c.stopRecording();
+        case 'status':
+          return c.recording() ?? 'not recording';
+        case 'clip': {
+          const seconds = Number(a1);
+          if (!Number.isFinite(seconds) || seconds <= 0) throw usage('record');
+          return c.recordClip(Math.round(seconds * 1000), {
+            output: a2,
+            fps: optionalNumber(a3),
+          });
+        }
+        case 'run': {
+          if (!a1) throw usage('record');
+          return c.runStoryboard(a1, {
+            output: a2,
+            fps: optionalNumber(a3),
+          });
+        }
+        default:
+          throw usage('record');
+      }
+    },
+  },
+  focus: { help: 'focus the client window (X11)', run: (c) => c.focusWindow() },
+  mouse: {
+    args: '<x> <y> [durationSec]',
+    help: 'move the X11 mouse cursor inside the client window',
+    run: (c, args) => {
+      const dur = optionalNumber(args[2]);
+      return c.mouseMove(num(args, 0, 'mouse'), num(args, 1, 'mouse'), {
+        durationMs: dur !== undefined ? Math.round(dur * 1000) : undefined,
+      });
+    },
+  },
+  mclick: {
+    args: '[x y] [button]',
+    help: 'click an X11 mouse button on the client window (1=left, 2=middle, 3=right)',
+    run: (c, args) => {
+      if (args.length >= 2) {
+        return c.mouseClick({
+          x: num(args, 0, 'mclick'),
+          y: num(args, 1, 'mclick'),
+          button: optionalNumber(args[2]),
+        });
+      }
+      return c.mouseClick({ button: optionalNumber(args[0]) });
+    },
+  },
+  key: {
+    args: '<key> [repeat]',
+    help: 'send an X11 key press to the client window (e.g. Escape, Return, F3+t)',
+    run: (c, [key, repeat]) => {
+      if (!key) throw usage('key');
+      return c.keyPress(key, { repeat: optionalNumber(repeat) });
+    },
+  },
+  pan: {
+    args: '<dyaw> <dpitch> [durationSec]',
+    help: 'smoothly pan the camera by relative yaw/pitch degrees',
+    run: (c, args) => {
+      const dur = optionalNumber(args[2]);
+      return c.panLook({
+        dyaw: num(args, 0, 'pan'),
+        dpitch: num(args, 1, 'pan'),
+        durationMs: dur !== undefined ? Math.round(dur * 1000) : undefined,
+      });
+    },
+  },
   respawn: { help: 'respawn after death', run: (c) => c.respawn() },
   look: {
     args: '<yaw> <pitch>',

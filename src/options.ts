@@ -14,6 +14,7 @@ export function defaultOptions(
     joinedFirstServer: 'true',
     tutorialStep: 'none',
     pauseOnLostFocus: 'false',
+    inactivityFpsLimit: '"none"',
     narrator: '0',
     fullscreen: 'false',
     renderDistance: String(opts.renderDistance ?? 8),

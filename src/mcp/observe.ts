@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { CalciteError } from '../client.js';
+import { CalciteError, type Storyboard } from '../client.js';
 import { clientName, coord, entityFilter, safe, timeoutSeconds, tool, type Result, type ToolContext } from './shared.js';
 
 /** Reading the world: entities, blocks, surroundings, screenshots, chat, events and logs. */
@@ -97,6 +97,83 @@ export function registerObserveTools({ server, manager }: ToolContext): void {
     async ({ client, enabled }) => {
       await manager.resolve(client).setRender(enabled);
       return `render ${enabled ? 'on' : 'off'}`;
+    },
+  );
+
+  tool(
+    server,
+    'start_recording',
+    {
+      title: 'Start video recording',
+      description:
+        'Starts recording the client window to an MP4 file (Linux X11/Xvfb with ffmpeg). Automatically turns rendering on while recording and restores it on stop.',
+      inputSchema: {
+        client: clientName,
+        output: z.string().optional().describe('Output MP4 path (defaults to <gameDir>/recordings/calcite-<ts>.mp4)'),
+        fps: z.number().int().min(1).max(120).optional().describe('Target frames per second (default 30)'),
+        crf: z.number().int().min(0).max(51).optional().describe('H.264 CRF quality 0-51, lower is sharper (default 20)'),
+        cursor: z.boolean().optional().describe('Draw the mouse cursor (default true)'),
+        fullScreen: z.boolean().optional().describe('Record the entire X11 display instead of cropping to the Minecraft window'),
+      },
+    },
+    async ({ client, ...opts }) => manager.resolve(client).startRecording(opts),
+  );
+
+  tool(
+    server,
+    'stop_recording',
+    {
+      title: 'Stop video recording',
+      description: 'Stops the active video recording, finalizes the MP4 file, and returns its path and video metadata.',
+      inputSchema: { client: clientName },
+    },
+    async ({ client }) => manager.resolve(client).stopRecording(),
+  );
+
+  tool(
+    server,
+    'record_clip',
+    {
+      title: 'Record video clip',
+      description: 'Records a fixed-length MP4 video clip of the client window and returns its path and metadata.',
+      inputSchema: {
+        client: clientName,
+        durationSeconds: z.number().positive().max(300).describe('Clip duration in seconds (up to 300)'),
+        output: z.string().optional().describe('Output MP4 path (defaults to <gameDir>/recordings/calcite-<ts>.mp4)'),
+        fps: z.number().int().min(1).max(120).optional().describe('Target frames per second (default 30)'),
+        crf: z.number().int().min(0).max(51).optional().describe('H.264 CRF quality 0-51, lower is sharper (default 20)'),
+        cursor: z.boolean().optional().describe('Draw the mouse cursor (default true)'),
+        fullScreen: z.boolean().optional().describe('Record the entire X11 display instead of cropping to the Minecraft window'),
+      },
+    },
+    async ({ client, durationSeconds, ...opts }) => manager.resolve(client).recordClip(Math.round(durationSeconds * 1000), opts),
+  );
+
+  tool(
+    server,
+    'record_storyboard',
+    {
+      title: 'Record declarative storyboard',
+      description:
+        'Runs a declarative JSON storyboard (setup -> startRecording -> steps -> stopRecording -> teardown) from a file path or inline object.',
+      inputSchema: {
+        client: clientName,
+        scriptPath: z.string().optional().describe('Path to a JSON storyboard file (mutually exclusive with storyboard)'),
+        storyboard: z.record(z.string(), z.unknown()).optional().describe('Inline storyboard object containing a "steps" array'),
+        output: z.string().optional().describe('Override output MP4 path'),
+        fps: z.number().int().min(1).max(120).optional().describe('Override target fps'),
+        crf: z.number().int().min(0).max(51).optional().describe('Override H.264 CRF quality (0-51)'),
+        cursor: z.boolean().optional().describe('Override mouse cursor capture'),
+        fullScreen: z.boolean().optional().describe('Override full-screen capture'),
+        dryRun: z.boolean().optional().describe('Validate and log timeline without touching the client or ffmpeg'),
+      },
+    },
+    async ({ client, scriptPath, storyboard, ...opts }) => {
+      if (Boolean(scriptPath) === Boolean(storyboard)) {
+        throw new CalciteError('bad_request', 'Pass either scriptPath or storyboard (not both and not neither)');
+      }
+      const source: Storyboard | string = scriptPath ?? (storyboard as unknown as Storyboard);
+      return manager.resolve(client).runStoryboard(source, opts);
     },
   );
 

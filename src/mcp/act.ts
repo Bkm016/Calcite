@@ -214,4 +214,105 @@ export function registerActTools({ server, manager, tasks }: ToolContext): void 
       return tasks.run(target, 'dig', bg, () => target.dig({ ...pos, face: f }, { stopOnDamage: stop, timeoutMs: seconds * 1000 }));
     },
   );
+
+  tool(
+    server,
+    'focus_window',
+    {
+      title: 'Focus game window',
+      description: 'Focuses the Minecraft X11 window (Linux X11/Xvfb with xdotool) so GUI screens accept mouse and keyboard input.',
+      inputSchema: { client: clientName },
+    },
+    async ({ client }) => {
+      await manager.resolve(client).focusWindow();
+      return 'focused';
+    },
+  );
+
+  const mouseSpace = z
+    .enum(['window', 'norm', 'root'])
+    .optional()
+    .describe('Coordinate space: "window" (client pixels, default), "norm" (0..1), or "root" (X11 screen)');
+
+  tool(
+    server,
+    'mouse_move',
+    {
+      title: 'Move mouse cursor',
+      description:
+        'Moves the X11 mouse cursor over the game window (for non-container GUI screens like dialogs and buttons), optionally with smooth easing.',
+      inputSchema: {
+        client: clientName,
+        x: z.number().finite().describe('Target X coordinate'),
+        y: z.number().finite().describe('Target Y coordinate'),
+        durationMs: z.number().min(0).max(30_000).optional().describe('Smooth move duration in ms (0 = instant)'),
+        space: mouseSpace,
+      },
+    },
+    async ({ client, x, y, durationMs, space }) => {
+      await manager.resolve(client).mouseMove(x, y, { durationMs, space });
+      return `moved to (${x}, ${y})`;
+    },
+  );
+
+  tool(
+    server,
+    'mouse_click',
+    {
+      title: 'Click mouse button',
+      description:
+        'Clicks an X11 mouse button on the game window (for dialogs, buttons, and custom UI hitboxes), optionally moving to (x, y) first.',
+      inputSchema: {
+        client: clientName,
+        x: z.number().finite().optional().describe('Optional target X coordinate'),
+        y: z.number().finite().optional().describe('Optional target Y coordinate'),
+        button: z.number().int().min(1).max(5).optional().describe('Mouse button: 1 = left (default), 2 = middle, 3 = right'),
+        durationMs: z.number().min(0).max(30_000).optional().describe('Smooth move duration in ms before clicking'),
+        holdMs: z.number().min(0).max(10_000).optional().describe('Hold time between mousedown and mouseup in ms (default 40)'),
+        space: mouseSpace,
+      },
+    },
+    async ({ client, ...opts }) => {
+      await manager.resolve(client).mouseClick(opts);
+      return 'clicked';
+    },
+  );
+
+  tool(
+    server,
+    'key_press',
+    {
+      title: 'Press keyboard key',
+      description: 'Sends one or more X11 key presses to the game window (e.g. "Escape", "Return", "e", "F3+t").',
+      inputSchema: {
+        client: clientName,
+        key: z.string().min(1).describe('X11 keysym or combo (e.g. "Escape", "Return", "F3+t")'),
+        repeat: z.number().int().min(1).max(100).optional().describe('Number of times to press (default 1)'),
+        delayMs: z.number().min(0).max(10_000).optional().describe('Delay between repeats in ms (default 100)'),
+      },
+    },
+    async ({ client, key, repeat, delayMs }) => {
+      await manager.resolve(client).keyPress(key, { repeat, delayMs });
+      return `pressed ${key}`;
+    },
+  );
+
+  tool(
+    server,
+    'pan_look',
+    {
+      title: 'Smooth camera pan',
+      description: 'Smoothly pans the player camera rotation using cubic ease-in-out (absolute yaw/pitch or relative dyaw/dpitch).',
+      inputSchema: {
+        client: clientName,
+        yaw: z.number().finite().optional().describe('Target absolute yaw in degrees (shortest arc)'),
+        pitch: z.number().min(-90).max(90).optional().describe('Target absolute pitch in degrees'),
+        dyaw: z.number().finite().optional().describe('Relative yaw delta in degrees'),
+        dpitch: z.number().finite().optional().describe('Relative pitch delta in degrees'),
+        durationMs: z.number().positive().max(60_000).optional().describe('Pan duration in ms (default 1000)'),
+        steps: z.number().int().positive().max(1000).optional().describe('Interpolation steps'),
+      },
+    },
+    async ({ client, ...opts }) => manager.resolve(client).panLook(opts),
+  );
 }
